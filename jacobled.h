@@ -14,7 +14,7 @@
 // approx 800nS for T1H
 // approx 1250nS period
 #define T0H_DUTY  0x8006
-#define T1H_DUTY  0x800D
+#define T1H_DUTY  0x800E
 #define CTOPVAL    0x0014
 
 #define NUMV2_LEDS 300

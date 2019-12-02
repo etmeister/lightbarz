@@ -36,8 +36,6 @@
 #define LED_PIN 2
 #define LED2_PIN 3
 #define LED3_PIN 5
-#define LED_TYPE WS2811
-#define COLOR_ORDER GRB
 
 //    READ_BUFSIZE            Size of the read buffer for incoming packets
 #define READ_BUFSIZE (20)
