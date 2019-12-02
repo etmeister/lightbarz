@@ -430,6 +430,8 @@ void callbackPacket(uint16_t handle)
   }
 }
 
+
+
 uint8_t rpm;
 uint8_t buttnum;
 boolean pressed;
@@ -441,6 +443,7 @@ void handlePacket(uint8_t packetlength) {
       // Buttons
       if (packetbuffer[1] == 'T') {
         Serial.println(F("Toggling Maestro"));
+        bleuart.write("Toggling display");
         toggleMaestro();
       }
       Serial.println((char*) packetbuffer);
@@ -449,14 +452,17 @@ void handlePacket(uint8_t packetlength) {
         switch (packetbuffer[1]) {
           case 'A':
             Serial.println("animation");
+            bleuart.write("animation changed");
             cycleAnimation();
             break;
           case 'P':
             Serial.println("palette");
+            bleuart.write("palette changed");
             cyclePalette();
             break;
           case 'O':
             Serial.println("orientation");
+            bleuart.write("orientation changed");
             cycleOrientation();
             break;
           case 'B':
@@ -472,9 +478,12 @@ void handlePacket(uint8_t packetlength) {
           case 'V':
             if (packetbuffer[2] == '1') {
               Serial.println(F("Tracking RPM for brightness"));
+              bleuart.write("tracking rpm");
+
               trackRpm = true;
             } else {
               Serial.println(F("Disabling rpm tracking"));
+              bleuart.write("not tracking");
               trackRpm = false;
             }
             break;
@@ -496,6 +505,7 @@ void handlePacket(uint8_t packetlength) {
                   custom_chars[i] = packetbuffer[i+2];
                 }
                 Serial.println(custom_chars);
+                bleuart.write("string set");
                 num_custom_chars = packetlength-2;
                 logoPos = 0-(num_custom_chars*(FONT_X+1));
                 logoSlide = true;
@@ -599,6 +609,8 @@ void brightnessUp() {
     currentBright = currentBright + BRIGHT_STEP;
     Serial.print(F("Brightness set to "));
     Serial.println((uint8_t)(currentBright * 255));
+    bleuart.write((uint8_t)(currentBright * 255));
+
     needsRedraw = true;
   }
 }
@@ -608,6 +620,7 @@ void brightnessDown() {
     currentBright = currentBright - BRIGHT_STEP;
     Serial.print(F("Brightness set to "));
     Serial.println((uint8_t)(currentBright * 255));
+    bleuart.write((uint8_t)(currentBright * 255));
     needsRedraw = true;
   }
 }
