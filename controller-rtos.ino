@@ -39,14 +39,6 @@
 #define LED_TYPE WS2811
 #define COLOR_ORDER GRB
 
-#define PACKET_ACC_LEN (15)
-#define PACKET_GYRO_LEN (15)
-#define PACKET_MAG_LEN (15)
-#define PACKET_QUAT_LEN (19)
-#define PACKET_BUTTON_LEN (5)
-#define PACKET_COLOR_LEN (6)
-#define PACKET_LOCATION_LEN (15)
-
 //    READ_BUFSIZE            Size of the read buffer for incoming packets
 #define READ_BUFSIZE (20)
 
@@ -151,23 +143,6 @@ void fade_out(int color_index, int start, int step = 1, int stop = 0)
   }
 }
 
-
-/*
-  const uint16_t logo_bits[] = {
-  0, 2, 4, 12, 14, 16, 24, 26, 28, 36, 37, 38, 39, 40, 72, 76,
-  84, 87, 96, 98, 108, 109, 144, 145, 146, 147, 148, 156, 160,
-  168, 172, 180, 181, 182, 183, 184, 216, 220, 228, 230, 232, 240,
-  242, 244, 252, 253, 256
-  };
-
-  const uint16_t two_bits[] = {
-  0, 2, 4, 12, 14, 16, 24, 26, 28, 36, 37, 38, 39, 40, 72, 76,
-  84, 87, 96, 98, 108, 109, 144, 145, 146, 147, 148, 156, 160,
-  168, 172, 180, 181, 182, 183, 184, 216, 220, 228, 230, 232, 240,
-  242, 244, 252, 253, 256
-  };*/
-
-
 void setLogo(const char* logo_bytes, const uint8_t num_bytes, uint16_t pos_x = 0, uint16_t pos_y = 0, bool blank = true, bool forceRedraw = true)
 {
   if (blank) {
@@ -216,31 +191,6 @@ void setLogo(const char* logo_bytes, const uint8_t num_bytes, uint16_t pos_x = 0
     pos_x += (FONT_X + 1  );
   }
 
-
-  /*    for (
-      pos = logo_bytes[i] + (row_offset * 12) + column_offset;
-      if (pos >= 0)
-      {
-        if (pos < 300)
-        {
-          leds[pos] = Colors::RGB(255, 255, 255);
-        }
-        else if (pos < 602)
-        {
-          if (pos != 300 && pos != 301)
-          {
-            leds2[pos - 302] = Colors::RGB(255, 255, 255);
-          }
-        }
-        else if (pos < 905)
-        {
-          if (pos != 602 && pos != 603 && pos != 604)
-          {
-            leds3[pos - 605] = Colors::RGB(255, 255, 255);
-          }
-        }
-      }
-    }*/
   if (forceRedraw) {
     redraw();
   }
@@ -371,10 +321,6 @@ void setup(void)
   animation.set_timer(240);
   //animation.set_fade(false);
 
-  /*Canvas& canvas = section->set_canvas();
-    Font *font = new Font3x5();
-    canvas.set_palette(whitePalette);
-    canvas.draw_text(0, 0, 0, 5, *font, "3 7 0 Z", 7);*/
   Animator.begin(2, taskAnimate);
   Animator.start();
 
