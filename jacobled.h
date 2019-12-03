@@ -26,8 +26,7 @@ typedef struct {
 } Color8_t;
 
 
-void     led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin);
-
+void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro::Colors::RGB *colors2, uint8_t pin2, PixelMaestro::Colors::RGB *colors3, uint8_t pin3);
 extern "C" void yield();
 #endif /* SRC_LED_LEDV2_H_ */
 

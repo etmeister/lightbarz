@@ -216,10 +216,11 @@ void colorCheck()
   for (uint8_t i = 0; i < 98; i++)
   {
     setLogo(z_chars, z_num_bytes, i - 22, LOGO_OFFSET);
-    delay(6);
+    delay(12);
   }
 }
-
+int lastSlide = 0;
+int logoDelay = 20;
 void redraw()
 {
 
@@ -227,11 +228,14 @@ void redraw()
     if (logoSlide && preset) {
       if (logoPos == NUM_COLUMNS+2) logoPos = 0-(num_custom_chars*(FONT_X+1));
       setLogo(custom_chars, num_custom_chars, logoPos, LOGO_OFFSET, false, false);
+      if (millis() > (lastSlide + logoDelay)) {
+      lastSlide = millis();
       logoPos++;
+      }
     }
-    led_set_colors(leds, LED_PIN);
-    led_set_colors(leds2, LED2_PIN);
-    led_set_colors(leds3, LED3_PIN);
+    led_set_colors(leds, LED_PIN, leds2, LED2_PIN, leds3, LED3_PIN);
+    
+      //Serial.println(dbgHeapTotal() - dbgHeapUsed());
     xSemaphoreGive( maestroSem );
   }
 }
@@ -312,14 +316,14 @@ void setup(void)
 
   colorCheck();
   maestro.set_brightness(255);
-  maestro.set_timer(8);
+  maestro.set_timer(12);
   Animation &animation = section->set_animation(animations[currentAnimation]);
   animation.set_palette(palettes[currentPalette]);
   animation.set_orientation(orientations[currentOrientation]);
   animation.set_timer(240);
   //animation.set_fade(false);
 
-  Animator.begin(2, taskAnimate);
+  Animator.begin(4, taskAnimate);
   Animator.start();
 
   Bluefruit.begin();
