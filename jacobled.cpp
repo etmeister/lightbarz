@@ -2,7 +2,7 @@
 #include <core/colors.h>
 #include <Arduino.h>
 
-#define NUM_CHUNKS 15
+#define NUM_CHUNKS 12
 #define NUMV2_LEDS 300
 
 static const uint8_t led_gamma_table[256] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -39,8 +39,6 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
 {
 
   NRF_PWM_Type* PWM[3] = {NRF_PWM0, NRF_PWM1, NRF_PWM2};
-
-  uint16_t led_index = 0;
   
   for (int j = 0; j < 3; j++) {
     PWM[j]->COUNTERTOP            = (CTOPVAL << PWM_COUNTERTOP_COUNTERTOP_Pos);
@@ -75,7 +73,6 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
   PWM[1]->SEQ[1].CNT            = (sizeof(pwm_buffer6) / 2) << PWM_SEQ_CNT_CNT_Pos;
 
   for (int i = 0; i < NUM_CHUNKS; i++) {
-    uint16_t byte_num;
     uint16_t bit_index = 0;
     uint16_t bit_index2 = 0;
     uint16_t bit_index3 = 0;
@@ -85,31 +82,27 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
     // The odd loops just fill their buffer, all waits occur before/after filling the buffer on even oops
     if (i > 0 && (i % 2) == 0) {
       while (!PWM[0]->EVENTS_SEQEND[0]) {
-        yield();
+        //yield();
       }
       PWM[0]->EVENTS_SEQEND[0]    = 0;
     }
     // Fill all even or odd buffers at once
-    for (led_index = (NUMV2_LEDS / NUM_CHUNKS * i); led_index < (NUMV2_LEDS / NUM_CHUNKS + (NUMV2_LEDS / NUM_CHUNKS * i)); led_index++) {
-
-      uint8_t bit_mask;
-      uint8_t val;
-      uint8_t val2;
-      uint8_t val3;
+    for (uint16_t led_index = (NUMV2_LEDS / NUM_CHUNKS * i); led_index < (NUMV2_LEDS / NUM_CHUNKS + (NUMV2_LEDS / NUM_CHUNKS * i)); led_index++) {
+      
       //        Serial.println("Filling buffer ");
       // for each byte, expand each bit to a PWM duty cycle
-      for (byte_num = 0; byte_num < sizeof(Color8_t); byte_num++) {
-        val = led_gamma_table[colors[led_index][byte_num]];
-        val2 = led_gamma_table[colors2[led_index][byte_num]];
-        val3 = led_gamma_table[colors3[led_index][byte_num]];
-        for (bit_mask = 0x80; bit_mask > 0x00; bit_mask >>= 1)
+      for (uint16_t byte_num = 0; byte_num < sizeof(Color8_t); byte_num++) {
+        uint8_t val  = led_gamma_table[colors[led_index][byte_num]];
+        uint8_t val2 = led_gamma_table[colors2[led_index][byte_num]];
+        uint8_t val3 = led_gamma_table[colors3[led_index][byte_num]];
+        for (uint8_t bit_mask = 0x80; bit_mask > 0x00; bit_mask >>= 1)
         {
           if (i % 2 == 0) {
-            pwm_buffer[bit_index++] = (val & bit_mask) ? T1H_DUTY : T0H_DUTY;
+            pwm_buffer[bit_index++]   = (val & bit_mask) ? T1H_DUTY : T0H_DUTY;
             pwm_buffer3[bit_index2++] = (val2 & bit_mask) ? T1H_DUTY : T0H_DUTY;
             pwm_buffer5[bit_index3++] = (val3 & bit_mask) ? T1H_DUTY : T0H_DUTY;
           } else {
-            pwm_buffer2[bit_index++] = (val & bit_mask) ? T1H_DUTY : T0H_DUTY;
+            pwm_buffer2[bit_index++]  = (val & bit_mask) ? T1H_DUTY : T0H_DUTY;
             pwm_buffer4[bit_index2++] = (val2 & bit_mask) ? T1H_DUTY : T0H_DUTY;
             pwm_buffer6[bit_index3++] = (val3 & bit_mask) ? T1H_DUTY : T0H_DUTY;
           }
@@ -121,7 +114,7 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
     // on even numbered loops, wait for the second SEQ to end before cycling
     if (i > 1 && (i % 2) == 0) {
       while (!PWM[0]->EVENTS_SEQEND[1]) {
-        yield();
+        //yield();
       }
       PWM[0]->EVENTS_SEQEND[1]    = 0;
 

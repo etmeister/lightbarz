@@ -22,6 +22,7 @@
 #include "font.h"
 #include <bluefruit.h>
 #include <Arduino.h>
+
 #define LOGO_OFFSET 5
 #define NUM_LEDS 300
 #define MIN_BRIGHT 0.2f
@@ -32,63 +33,64 @@
 #define NUM_COLUMNS 76
 #define FONT_X 5
 #define FONT_Y 5
-
+#define REFRESH 12
+#define ANIM_TIMER 640
 #define LED_PIN 2
 #define LED2_PIN 3
 #define LED3_PIN 5
-
 //    READ_BUFSIZE            Size of the read buffer for incoming packets
 #define READ_BUFSIZE (20)
 
 /* Buffer to hold incoming characters */
-uint8_t packetbuffer[READ_BUFSIZE + 1];
 
-bool needsRedraw = false;
+
 SemaphoreHandle_t maestroSem;
 SemaphoreHandle_t packetSem;
+SoftwareTimer Animator;
 
 Colors::RGB leds[NUM_LEDS];
 Colors::RGB leds2[NUM_LEDS];
 Colors::RGB leds3[NUM_LEDS];
 
+bool needsRedraw = false;
+bool preset = false;
+float currentBright = DEFAULT_BRIGHT;
+
 bool logoSlide = false;
 int8_t logoPos = 0;
+int lastSlide = 0;
+int logoDelay = 20;
 
-// OTA DFU service
-BLEDfu bledfu;
+bool trackRpm = false;
 
-// Uart over BLE service
-BLEUart bleuart;
-SoftwareTimer Animator;
-
-// Function prototypes for packetparser.cpp
-
-// Packet buffer
+static const uint8_t z_num_bytes = 4;
+static const char z_chars[] = "370Z";
+char custom_chars[16];
+uint8_t num_custom_chars;
 
 Maestro maestro(NUM_COLUMNS, NUM_ROWS);
 Section *section = maestro.get_section(0);
 
-bool trackRpm = false;
-
-//Adafruit_NeoPixel strip(NUM_LEDS, DATA_PIN, NEO_GRB + NEO_KHZ800);
 const AnimationType animations[6] = {AnimationType::Wave, AnimationType::Fire, AnimationType::Plasma, AnimationType::Radial, AnimationType::Sparkle, AnimationType::Cycle};
-Animation::Orientation orientations[2] = {Animation::Orientation::Vertical, Animation::Orientation::Horizontal};
-
-// palettes.h - numPalettes
+const Animation::Orientation orientations[2] = {Animation::Orientation::Vertical, Animation::Orientation::Horizontal};
 static const int numAnimations = 6;
 static const int numOrientations = 2;
-
 int currentAnimation = 0;
 int currentOrientation = 0;
 int currentPalette = 0;
 
-bool preset = false;
-float currentBright = DEFAULT_BRIGHT;
+uint8_t packetbuffer[READ_BUFSIZE + 1];
+// OTA DFU service
+BLEDfu bledfu;
+// Uart over BLE service
+BLEUart bleuart;
 
-static const uint8_t z_num_bytes = 4;
-static const char z_chars[] = {'3','7','0','Z'};
-char custom_chars[16];
-uint8_t num_custom_chars;
+
+/* 
+ *  
+ *  Animation helpers
+ *  
+ */
 
 void fade_set(int color_value, int color_index, bool forceRedraw = true)
 {
@@ -219,8 +221,7 @@ void colorCheck()
     delay(12);
   }
 }
-int lastSlide = 0;
-int logoDelay = 20;
+
 void redraw()
 {
 
@@ -233,7 +234,11 @@ void redraw()
       logoPos++;
       }
     }
+    //Serial.print("pre-set: ");
+    //Serial.println(millis());
     led_set_colors(leds, LED_PIN, leds2, LED2_PIN, leds3, LED3_PIN);
+   // Serial.print("post-set: ");
+  //  Serial.println(millis());
     
       //Serial.println(dbgHeapTotal() - dbgHeapUsed());
     xSemaphoreGive( maestroSem );
@@ -285,6 +290,96 @@ void syncMaestro()
 
 }
 
+
+
+
+/*
+ * 
+ * Command Functions
+ * 
+ */
+
+void toggleMaestro() {
+  //if (!preset)
+  preset = !preset;
+  if (!preset)
+  {
+    setBlack(false);
+    needsRedraw = true;
+  }
+}
+
+void cycleAnimation() {
+  if (currentAnimation < (numAnimations - 1))
+  {
+    currentAnimation++;
+  }
+  else
+  {
+    currentAnimation = 0;
+  }
+
+  section->remove_animation(false);
+  Animation &animation = section->set_animation(animations[currentAnimation]);
+  animation.set_palette(palettes[currentPalette]);
+  animation.set_orientation(orientations[currentOrientation]);
+  animation.set_timer(ANIM_TIMER);
+}
+
+void cyclePalette() {
+  if (currentPalette < (numPalettes - 1))
+  {
+    currentPalette++;
+  }
+  else
+  {
+    currentPalette = 0;
+  }
+  section->get_animation()->set_palette(palettes[currentPalette]);
+}
+
+void cycleOrientation() {
+  if (currentOrientation < (numOrientations - 1))
+  {
+    currentOrientation++;
+  }
+  else
+  {
+    currentOrientation = 0;
+  }
+  section->get_animation()->set_orientation(orientations[currentOrientation]);
+}
+
+void brightnessUp() {
+  if (currentBright < MAX_BRIGHT)
+  {
+
+    currentBright = currentBright + BRIGHT_STEP;
+    Serial.print(F("Brightness set to "));
+    Serial.println((uint8_t)(currentBright * 255));
+    //bleuart.write((uint8_t)(currentBright * 255));
+
+    needsRedraw = true;
+  }
+}
+
+void brightnessDown() {
+  if (currentBright > MIN_BRIGHT) {
+    currentBright = currentBright - BRIGHT_STEP;
+    Serial.print(F("Brightness set to "));
+    Serial.println((uint8_t)(currentBright * 255));
+    //bleuart.write((uint8_t)(currentBright * 255));
+    needsRedraw = true;
+  }
+}
+
+
+/*
+ * 
+ * Arduino functions
+ * 
+ */
+ 
 void setup(void)
 {
   Serial.begin(115200);
@@ -316,11 +411,11 @@ void setup(void)
 
   colorCheck();
   maestro.set_brightness(255);
-  maestro.set_timer(12);
+  maestro.set_timer(REFRESH);
   Animation &animation = section->set_animation(animations[currentAnimation]);
   animation.set_palette(palettes[currentPalette]);
   animation.set_orientation(orientations[currentOrientation]);
-  animation.set_timer(240);
+  animation.set_timer(ANIM_TIMER);
   //animation.set_fade(false);
 
   Animator.begin(4, taskAnimate);
@@ -348,6 +443,11 @@ void loop(void)
   redraw();
 }
 
+/*
+ * 
+ * Bluetooth LE Functions
+ * 
+ */
 void callbackPacket(uint16_t handle)
 {
   if ( xSemaphoreTake( packetSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
@@ -377,12 +477,8 @@ void callbackPacket(uint16_t handle)
     xSemaphoreGive( packetSem );
   }
 }
-
-
-
-uint8_t rpm;
-uint8_t buttnum;
-boolean pressed;
+void setDelay(int16_t delayAmount) {
+}
 void handlePacket(uint8_t packetlength) {
       Serial.println(dbgHeapTotal() - dbgHeapUsed());
 
@@ -436,11 +532,10 @@ void handlePacket(uint8_t packetlength) {
             }
             break;
           case 'R':
-            rpm = packetbuffer[2];
             if (trackRpm) {
               Serial.print(F("RPM "));
-              Serial.println(rpm);
-              currentBright = (float(rpm) / 255.0f);
+              Serial.println(packetbuffer[2]);
+              currentBright = (float(packetbuffer[2]) / 255.0f);
               if (currentBright > 1.0f) currentBright = 1.0f;
               needsRedraw = true;
             }
@@ -495,82 +590,6 @@ void handlePacket(uint8_t packetlength) {
             break;
           }
       }*/
-}
-
-void toggleMaestro() {
-  //if (!preset)
-  preset = !preset;
-  if (!preset)
-  {
-    setBlack(false);
-    needsRedraw = true;
-  }
-}
-
-
-
-void cycleAnimation() {
-  if (currentAnimation < (numAnimations - 1))
-  {
-    currentAnimation++;
-  }
-  else
-  {
-    currentAnimation = 0;
-  }
-
-  section->remove_animation(false);
-  Animation &animation = section->set_animation(animations[currentAnimation]);
-  animation.set_palette(palettes[currentPalette]);
-  animation.set_orientation(orientations[currentOrientation]);
-  animation.set_timer(240);
-}
-
-void cyclePalette() {
-  if (currentPalette < (numPalettes - 1))
-  {
-    currentPalette++;
-  }
-  else
-  {
-    currentPalette = 0;
-  }
-  section->get_animation()->set_palette(palettes[currentPalette]);
-}
-
-void cycleOrientation() {
-  if (currentOrientation < (numOrientations - 1))
-  {
-    currentOrientation++;
-  }
-  else
-  {
-    currentOrientation = 0;
-  }
-  section->get_animation()->set_orientation(orientations[currentOrientation]);
-}
-
-void brightnessUp() {
-  if (currentBright < MAX_BRIGHT)
-  {
-
-    currentBright = currentBright + BRIGHT_STEP;
-    Serial.print(F("Brightness set to "));
-    Serial.println((uint8_t)(currentBright * 255));
-    bleuart.write((uint8_t)(currentBright * 255));
-
-    needsRedraw = true;
-  }
-}
-
-void brightnessDown() {
-  if (currentBright > MIN_BRIGHT) {
-    currentBright = currentBright - BRIGHT_STEP;
-    Serial.print(F("Brightness set to "));
-    Serial.println((uint8_t)(currentBright * 255));
-    bleuart.write((uint8_t)(currentBright * 255));
-    needsRedraw = true;
-  }
 }
 
 void startAdv(void)
