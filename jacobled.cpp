@@ -20,7 +20,10 @@ static const uint8_t led_gamma_table[256] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                                              222, 224, 227, 229, 231, 233, 235, 237, 239, 241, 244, 246, 248, 250, 252, 255
                                             };
 
-// ALL YOUR BUFFER ARE BELONG TO US
+/* ALL YOUR BUFFER ARE BELONG TO US
+   2 buffers per led strip, each 1/6 of the size of the LEDs. NUMV2_LEDS must be a multiple of 6.
+   alternate between the two buffers, each on their own SEQ, using LOOP to automatically cycle between them.
+   This is hard-coded for 3 strips on 3 different pins, each taking a separate PWM device */
 uint16_t pwm_buffer[(NUMV2_LEDS / 6) * sizeof(Color8_t) * 8];
 uint16_t pwm_buffer2[(NUMV2_LEDS / 6) * sizeof(Color8_t) * 8];
 uint16_t pwm_buffer3[(NUMV2_LEDS / 6) * sizeof(Color8_t) * 8];
@@ -31,130 +34,128 @@ uint16_t pwm_buffer6[(NUMV2_LEDS / 6) * sizeof(Color8_t) * 8];
 
 void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro::Colors::RGB *colors2, uint8_t pin2, PixelMaestro::Colors::RGB *colors3, uint8_t pin3)
 {
-  // find a free PWM[pwm_num] module
 
   NRF_PWM_Type* PWM[3] = {NRF_PWM0, NRF_PWM1, NRF_PWM2};
 
+  uint16_t led_index = 0;
+  for (int i = 0; i < 6; i++) {
+    uint16_t byte_num;
+    uint16_t bit_index = 0;
+    uint16_t bit_index2 = 0;
+    uint16_t bit_index3 = 0;
 
 
-  // if a free PWM[pwm_num] module was found
-  if (PWM[0] != NULL)
-  {
-    // for each byte, expand each bit to a PWM[pwm_num] duty cycle
-    uint16_t led_index = 0;
-    for (int i = 0; i < 6; i++) {
-      uint16_t byte_num;
-      uint16_t bit_index = 0;
-      uint16_t bit_index2 = 0;
-      uint16_t bit_index3 = 0;
-
-      if (i > 0 && (i % 2) == 0) {
-        while (!PWM[0]->EVENTS_SEQEND[0]) {
-          yield();
-        }
-        PWM[0]->EVENTS_SEQEND[0]    = 0;
+    // on even-numbered loops, wait for the first SEQ to end before filling the buffer
+    // The odd loops just fill their buffer, all waits occur before/after filling the buffer on even oops
+    if (i > 0 && (i % 2) == 0) {
+      while (!PWM[0]->EVENTS_SEQEND[0]) {
+        yield();
       }
-      for (led_index = (50 * i); led_index < (NUMV2_LEDS / 6 + (50 * i)); led_index++) {
+      PWM[0]->EVENTS_SEQEND[0]    = 0;
+    }
+    // Fill all even or odd buffers at once
+    for (led_index = (NUMV2_LEDS / 6 * i); led_index < (NUMV2_LEDS / 6 + (NUMV2_LEDS / 6 * i)); led_index++) {
 
-        uint8_t bit_mask;
-        uint8_t val;
-        uint8_t val2;
-        uint8_t val3;
-        //        Serial.println("Filling buffer ");
-        for (byte_num = 0; byte_num < sizeof(Color8_t); byte_num++) {
-          val = led_gamma_table[colors[led_index][byte_num]];
-          val2 = led_gamma_table[colors2[led_index][byte_num]];
-          val3 = led_gamma_table[colors3[led_index][byte_num]];
-          for (bit_mask = 0x80; bit_mask > 0x00; bit_mask >>= 1)
-          {
-            if (i % 2 == 0) {
-              pwm_buffer[bit_index++] = (val & bit_mask) ? T1H_DUTY : T0H_DUTY;
-              pwm_buffer3[bit_index2++] = (val2 & bit_mask) ? T1H_DUTY : T0H_DUTY;
-              pwm_buffer5[bit_index3++] = (val3 & bit_mask) ? T1H_DUTY : T0H_DUTY;
-            } else {
-              pwm_buffer2[bit_index++] = (val & bit_mask) ? T1H_DUTY : T0H_DUTY;
-              pwm_buffer4[bit_index2++] = (val2 & bit_mask) ? T1H_DUTY : T0H_DUTY;
-              pwm_buffer6[bit_index3++] = (val3 & bit_mask) ? T1H_DUTY : T0H_DUTY;
-            }
+      uint8_t bit_mask;
+      uint8_t val;
+      uint8_t val2;
+      uint8_t val3;
+      //        Serial.println("Filling buffer ");
+      // for each byte, expand each bit to a PWM duty cycle
+      for (byte_num = 0; byte_num < sizeof(Color8_t); byte_num++) {
+        val = led_gamma_table[colors[led_index][byte_num]];
+        val2 = led_gamma_table[colors2[led_index][byte_num]];
+        val3 = led_gamma_table[colors3[led_index][byte_num]];
+        for (bit_mask = 0x80; bit_mask > 0x00; bit_mask >>= 1)
+        {
+          if (i % 2 == 0) {
+            pwm_buffer[bit_index++] = (val & bit_mask) ? T1H_DUTY : T0H_DUTY;
+            pwm_buffer3[bit_index2++] = (val2 & bit_mask) ? T1H_DUTY : T0H_DUTY;
+            pwm_buffer5[bit_index3++] = (val3 & bit_mask) ? T1H_DUTY : T0H_DUTY;
+          } else {
+            pwm_buffer2[bit_index++] = (val & bit_mask) ? T1H_DUTY : T0H_DUTY;
+            pwm_buffer4[bit_index2++] = (val2 & bit_mask) ? T1H_DUTY : T0H_DUTY;
+            pwm_buffer6[bit_index3++] = (val3 & bit_mask) ? T1H_DUTY : T0H_DUTY;
           }
         }
-        //                 Serial.println("Buffer full");
       }
-
-
-      if (i > 1 && (i % 2) == 0) {
-        while (!PWM[0]->EVENTS_SEQEND[1]) {
-          yield();
-        }
-        PWM[0]->EVENTS_SEQEND[1]    = 0;
-
-      }
-
-      // PWM[pwm_num] module config
-      // top value as defined in header
-      // loop disabled
-      // mode = up/down
-      // prescaler = 1
-
-      if (i == 0) {
-        for (int j = 0; j < 3; j++) {
-          PWM[j]->COUNTERTOP            = (CTOPVAL << PWM_COUNTERTOP_COUNTERTOP_Pos);
-          PWM[j]->DECODER                 = (PWM_DECODER_LOAD_Common << PWM_DECODER_LOAD_Pos) |
-                                            (PWM_DECODER_MODE_RefreshCount << PWM_DECODER_MODE_Pos);
-          PWM[j]->LOOP                        = (3 << PWM_LOOP_CNT_Pos);
-          PWM[j]->MODE                        = (PWM_MODE_UPDOWN_Up << PWM_MODE_UPDOWN_Pos);
-          PWM[j]->PRESCALER             = (PWM_PRESCALER_PRESCALER_DIV_1 << PWM_PRESCALER_PRESCALER_Pos);
-          PWM[j]->SEQ[0].ENDDELAY = 0;
-          PWM[j]->SEQ[0].REFRESH    = 0;
-          PWM[j]->SEQ[1].ENDDELAY = 0;
-          PWM[j]->SEQ[1].REFRESH    = 0;
-          PWM[j]->ENABLE = 1;
-        }
-        PWM[0]->PSEL.OUT[0]         = pin;
-        PWM[1]->PSEL.OUT[0]         = pin2;
-        PWM[2]->PSEL.OUT[0]         = pin3;
-
-        PWM[0]->SEQ[0].PTR            = (uint32_t)(pwm_buffer) << PWM_SEQ_PTR_PTR_Pos;
-        PWM[0]->SEQ[0].CNT            = (sizeof(pwm_buffer) / 2) << PWM_SEQ_CNT_CNT_Pos;
-        PWM[0]->SEQ[1].PTR            = (uint32_t)(pwm_buffer2) << PWM_SEQ_PTR_PTR_Pos;
-        PWM[0]->SEQ[1].CNT            = (sizeof(pwm_buffer2) / 2) << PWM_SEQ_CNT_CNT_Pos;
-
-        PWM[1]->SEQ[0].PTR            = (uint32_t)(pwm_buffer3) << PWM_SEQ_PTR_PTR_Pos;
-        PWM[1]->SEQ[0].CNT            = (sizeof(pwm_buffer3) / 2) << PWM_SEQ_CNT_CNT_Pos;
-        PWM[1]->SEQ[1].PTR            = (uint32_t)(pwm_buffer4) << PWM_SEQ_PTR_PTR_Pos;
-        PWM[1]->SEQ[1].CNT            = (sizeof(pwm_buffer4) / 2) << PWM_SEQ_CNT_CNT_Pos;
-
-        PWM[1]->SEQ[0].PTR            = (uint32_t)(pwm_buffer5) << PWM_SEQ_PTR_PTR_Pos;
-        PWM[1]->SEQ[0].CNT            = (sizeof(pwm_buffer5) / 2) << PWM_SEQ_CNT_CNT_Pos;
-        PWM[1]->SEQ[1].PTR            = (uint32_t)(pwm_buffer6) << PWM_SEQ_PTR_PTR_Pos;
-        PWM[1]->SEQ[1].CNT            = (sizeof(pwm_buffer6) / 2) << PWM_SEQ_CNT_CNT_Pos;
-
-      }
-      // fire off the start task
-      if (i == 1) {
-        for (uint8_t j = 0; j < 3; j++) {
-          PWM[j]->EVENTS_LOOPSDONE = 0;
-          PWM[j]->EVENTS_SEQEND[0]    = 0;
-          PWM[j]->EVENTS_SEQEND[1]    = 0;
-
-          PWM[j]->TASKS_SEQSTART[0] = 1;
-        }
-      }
-    }
-    // Wait for the last round of SEQ[1] to complete
-    while (!PWM[0]->EVENTS_LOOPSDONE) {
-      yield();
+      //                 Serial.println("Buffer full");
     }
 
+    // on even numbered loops, wait for the second SEQ to end before cycling
+    if (i > 1 && (i % 2) == 0) {
+      while (!PWM[0]->EVENTS_SEQEND[1]) {
+        yield();
+      }
+      PWM[0]->EVENTS_SEQEND[1]    = 0;
 
+    }
 
-    // disable PWM[pwm_num] module, disconnect the pin
-    PWM[0]->ENABLE = 0;
-    PWM[0]->PSEL.OUT[0] = 0xFFFFFFFFUL;
-    PWM[1]->ENABLE = 0;
-    PWM[1]->PSEL.OUT[0] = 0xFFFFFFFFUL;
-    PWM[2]->ENABLE = 0;
-    PWM[2]->PSEL.OUT[0] = 0xFFFFFFFFUL;
+    // PWM[pwm_num] module config
+    // top value as defined in header
+    // loop disabled
+    // mode = up/down
+    // prescaler = 1
+
+    if (i == 0) {
+      for (int j = 0; j < 3; j++) {
+        PWM[j]->COUNTERTOP            = (CTOPVAL << PWM_COUNTERTOP_COUNTERTOP_Pos);
+        PWM[j]->DECODER                 = (PWM_DECODER_LOAD_Common << PWM_DECODER_LOAD_Pos) |
+                                          (PWM_DECODER_MODE_RefreshCount << PWM_DECODER_MODE_Pos);
+        PWM[j]->LOOP                        = (3 << PWM_LOOP_CNT_Pos);
+        PWM[j]->MODE                        = (PWM_MODE_UPDOWN_Up << PWM_MODE_UPDOWN_Pos);
+        PWM[j]->PRESCALER             = (PWM_PRESCALER_PRESCALER_DIV_1 << PWM_PRESCALER_PRESCALER_Pos);
+        PWM[j]->SEQ[0].ENDDELAY = 0;
+        PWM[j]->SEQ[0].REFRESH    = 0;
+        PWM[j]->SEQ[1].ENDDELAY = 0;
+        PWM[j]->SEQ[1].REFRESH    = 0;
+        PWM[j]->ENABLE = 1;
+      }
+      PWM[0]->PSEL.OUT[0]         = pin;
+      PWM[1]->PSEL.OUT[0]         = pin2;
+      PWM[2]->PSEL.OUT[0]         = pin3;
+
+      PWM[0]->SEQ[0].PTR            = (uint32_t)(pwm_buffer) << PWM_SEQ_PTR_PTR_Pos;
+      PWM[0]->SEQ[0].CNT            = (sizeof(pwm_buffer) / 2) << PWM_SEQ_CNT_CNT_Pos;
+      PWM[0]->SEQ[1].PTR            = (uint32_t)(pwm_buffer2) << PWM_SEQ_PTR_PTR_Pos;
+      PWM[0]->SEQ[1].CNT            = (sizeof(pwm_buffer2) / 2) << PWM_SEQ_CNT_CNT_Pos;
+
+      PWM[1]->SEQ[0].PTR            = (uint32_t)(pwm_buffer3) << PWM_SEQ_PTR_PTR_Pos;
+      PWM[1]->SEQ[0].CNT            = (sizeof(pwm_buffer3) / 2) << PWM_SEQ_CNT_CNT_Pos;
+      PWM[1]->SEQ[1].PTR            = (uint32_t)(pwm_buffer4) << PWM_SEQ_PTR_PTR_Pos;
+      PWM[1]->SEQ[1].CNT            = (sizeof(pwm_buffer4) / 2) << PWM_SEQ_CNT_CNT_Pos;
+
+      PWM[1]->SEQ[0].PTR            = (uint32_t)(pwm_buffer5) << PWM_SEQ_PTR_PTR_Pos;
+      PWM[1]->SEQ[0].CNT            = (sizeof(pwm_buffer5) / 2) << PWM_SEQ_CNT_CNT_Pos;
+      PWM[1]->SEQ[1].PTR            = (uint32_t)(pwm_buffer6) << PWM_SEQ_PTR_PTR_Pos;
+      PWM[1]->SEQ[1].CNT            = (sizeof(pwm_buffer6) / 2) << PWM_SEQ_CNT_CNT_Pos;
+
+    }
+    // fire off the initial start task
+    // due to LOOP == 3, the PWM will automatically cycle between SEQ[0] and SEQ[1] 3 times
+    if (i == 1) {
+      for (uint8_t j = 0; j < 3; j++) {
+        PWM[j]->EVENTS_LOOPSDONE = 0;
+        PWM[j]->EVENTS_SEQEND[0]    = 0;
+        PWM[j]->EVENTS_SEQEND[1]    = 0;
+
+        PWM[j]->TASKS_SEQSTART[0] = 1;
+      }
+    }
   }
+  // Wait for the last round of SEQ[1] to complete
+  while (!PWM[0]->EVENTS_LOOPSDONE) {
+    yield();
+  }
+
+
+
+  // disable PWM modules, disconnect the pins
+  PWM[0]->ENABLE = 0;
+  PWM[0]->PSEL.OUT[0] = 0xFFFFFFFFUL;
+  PWM[1]->ENABLE = 0;
+  PWM[1]->PSEL.OUT[0] = 0xFFFFFFFFUL;
+  PWM[2]->ENABLE = 0;
+  PWM[2]->PSEL.OUT[0] = 0xFFFFFFFFUL;
 }
 
