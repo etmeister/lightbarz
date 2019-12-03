@@ -2,6 +2,9 @@
 #include <core/colors.h>
 #include <Arduino.h>
 
+#define NUM_CHUNKS 15
+#define NUMV2_LEDS 300
+
 static const uint8_t led_gamma_table[256] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                                              0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2,
                                              2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5,
@@ -24,12 +27,12 @@ static const uint8_t led_gamma_table[256] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
    2 buffers per led strip, each 1/6 of the size of the LEDs. NUMV2_LEDS must be a multiple of 6.
    alternate between the two buffers, each on their own SEQ, using LOOP to automatically cycle between them.
    This is hard-coded for 3 strips on 3 different pins, each taking a separate PWM device */
-uint16_t pwm_buffer[(NUMV2_LEDS / 6) * sizeof(Color8_t) * 8];
-uint16_t pwm_buffer2[(NUMV2_LEDS / 6) * sizeof(Color8_t) * 8];
-uint16_t pwm_buffer3[(NUMV2_LEDS / 6) * sizeof(Color8_t) * 8];
-uint16_t pwm_buffer4[(NUMV2_LEDS / 6) * sizeof(Color8_t) * 8];
-uint16_t pwm_buffer5[(NUMV2_LEDS / 6) * sizeof(Color8_t) * 8];
-uint16_t pwm_buffer6[(NUMV2_LEDS / 6) * sizeof(Color8_t) * 8];
+uint16_t pwm_buffer[(NUMV2_LEDS / NUM_CHUNKS) * sizeof(Color8_t) * 8];
+uint16_t pwm_buffer2[(NUMV2_LEDS / NUM_CHUNKS) * sizeof(Color8_t) * 8];
+uint16_t pwm_buffer3[(NUMV2_LEDS / NUM_CHUNKS) * sizeof(Color8_t) * 8];
+uint16_t pwm_buffer4[(NUMV2_LEDS / NUM_CHUNKS) * sizeof(Color8_t) * 8];
+uint16_t pwm_buffer5[(NUMV2_LEDS / NUM_CHUNKS) * sizeof(Color8_t) * 8];
+uint16_t pwm_buffer6[(NUMV2_LEDS / NUM_CHUNKS) * sizeof(Color8_t) * 8];
 
 
 void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro::Colors::RGB *colors2, uint8_t pin2, PixelMaestro::Colors::RGB *colors3, uint8_t pin3)
@@ -38,7 +41,40 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
   NRF_PWM_Type* PWM[3] = {NRF_PWM0, NRF_PWM1, NRF_PWM2};
 
   uint16_t led_index = 0;
-  for (int i = 0; i < 6; i++) {
+  
+  for (int j = 0; j < 3; j++) {
+    PWM[j]->COUNTERTOP            = (CTOPVAL << PWM_COUNTERTOP_COUNTERTOP_Pos);
+    PWM[j]->DECODER                 = (PWM_DECODER_LOAD_Common << PWM_DECODER_LOAD_Pos) |
+                                      (PWM_DECODER_MODE_RefreshCount << PWM_DECODER_MODE_Pos);
+    PWM[j]->LOOP                        = ((NUM_CHUNKS / 2) << PWM_LOOP_CNT_Pos);
+    PWM[j]->MODE                        = (PWM_MODE_UPDOWN_Up << PWM_MODE_UPDOWN_Pos);
+    PWM[j]->PRESCALER             = (PWM_PRESCALER_PRESCALER_DIV_1 << PWM_PRESCALER_PRESCALER_Pos);
+    PWM[j]->SEQ[0].ENDDELAY = 0;
+    PWM[j]->SEQ[0].REFRESH    = 0;
+    PWM[j]->SEQ[1].ENDDELAY = 0;
+    PWM[j]->SEQ[1].REFRESH    = 0;
+    PWM[j]->ENABLE = 1;
+  }
+  PWM[0]->PSEL.OUT[0]         = pin;
+  PWM[1]->PSEL.OUT[0]         = pin2;
+  PWM[2]->PSEL.OUT[0]         = pin3;
+
+  PWM[0]->SEQ[0].PTR            = (uint32_t)(pwm_buffer) << PWM_SEQ_PTR_PTR_Pos;
+  PWM[0]->SEQ[0].CNT            = (sizeof(pwm_buffer) / 2) << PWM_SEQ_CNT_CNT_Pos;
+  PWM[0]->SEQ[1].PTR            = (uint32_t)(pwm_buffer2) << PWM_SEQ_PTR_PTR_Pos;
+  PWM[0]->SEQ[1].CNT            = (sizeof(pwm_buffer2) / 2) << PWM_SEQ_CNT_CNT_Pos;
+
+  PWM[1]->SEQ[0].PTR            = (uint32_t)(pwm_buffer3) << PWM_SEQ_PTR_PTR_Pos;
+  PWM[1]->SEQ[0].CNT            = (sizeof(pwm_buffer3) / 2) << PWM_SEQ_CNT_CNT_Pos;
+  PWM[1]->SEQ[1].PTR            = (uint32_t)(pwm_buffer4) << PWM_SEQ_PTR_PTR_Pos;
+  PWM[1]->SEQ[1].CNT            = (sizeof(pwm_buffer4) / 2) << PWM_SEQ_CNT_CNT_Pos;
+
+  PWM[1]->SEQ[0].PTR            = (uint32_t)(pwm_buffer5) << PWM_SEQ_PTR_PTR_Pos;
+  PWM[1]->SEQ[0].CNT            = (sizeof(pwm_buffer5) / 2) << PWM_SEQ_CNT_CNT_Pos;
+  PWM[1]->SEQ[1].PTR            = (uint32_t)(pwm_buffer6) << PWM_SEQ_PTR_PTR_Pos;
+  PWM[1]->SEQ[1].CNT            = (sizeof(pwm_buffer6) / 2) << PWM_SEQ_CNT_CNT_Pos;
+
+  for (int i = 0; i < NUM_CHUNKS; i++) {
     uint16_t byte_num;
     uint16_t bit_index = 0;
     uint16_t bit_index2 = 0;
@@ -54,7 +90,7 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
       PWM[0]->EVENTS_SEQEND[0]    = 0;
     }
     // Fill all even or odd buffers at once
-    for (led_index = (NUMV2_LEDS / 6 * i); led_index < (NUMV2_LEDS / 6 + (NUMV2_LEDS / 6 * i)); led_index++) {
+    for (led_index = (NUMV2_LEDS / NUM_CHUNKS * i); led_index < (NUMV2_LEDS / NUM_CHUNKS + (NUMV2_LEDS / NUM_CHUNKS * i)); led_index++) {
 
       uint8_t bit_mask;
       uint8_t val;
@@ -97,40 +133,6 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
     // mode = up/down
     // prescaler = 1
 
-    if (i == 0) {
-      for (int j = 0; j < 3; j++) {
-        PWM[j]->COUNTERTOP            = (CTOPVAL << PWM_COUNTERTOP_COUNTERTOP_Pos);
-        PWM[j]->DECODER                 = (PWM_DECODER_LOAD_Common << PWM_DECODER_LOAD_Pos) |
-                                          (PWM_DECODER_MODE_RefreshCount << PWM_DECODER_MODE_Pos);
-        PWM[j]->LOOP                        = (3 << PWM_LOOP_CNT_Pos);
-        PWM[j]->MODE                        = (PWM_MODE_UPDOWN_Up << PWM_MODE_UPDOWN_Pos);
-        PWM[j]->PRESCALER             = (PWM_PRESCALER_PRESCALER_DIV_1 << PWM_PRESCALER_PRESCALER_Pos);
-        PWM[j]->SEQ[0].ENDDELAY = 0;
-        PWM[j]->SEQ[0].REFRESH    = 0;
-        PWM[j]->SEQ[1].ENDDELAY = 0;
-        PWM[j]->SEQ[1].REFRESH    = 0;
-        PWM[j]->ENABLE = 1;
-      }
-      PWM[0]->PSEL.OUT[0]         = pin;
-      PWM[1]->PSEL.OUT[0]         = pin2;
-      PWM[2]->PSEL.OUT[0]         = pin3;
-
-      PWM[0]->SEQ[0].PTR            = (uint32_t)(pwm_buffer) << PWM_SEQ_PTR_PTR_Pos;
-      PWM[0]->SEQ[0].CNT            = (sizeof(pwm_buffer) / 2) << PWM_SEQ_CNT_CNT_Pos;
-      PWM[0]->SEQ[1].PTR            = (uint32_t)(pwm_buffer2) << PWM_SEQ_PTR_PTR_Pos;
-      PWM[0]->SEQ[1].CNT            = (sizeof(pwm_buffer2) / 2) << PWM_SEQ_CNT_CNT_Pos;
-
-      PWM[1]->SEQ[0].PTR            = (uint32_t)(pwm_buffer3) << PWM_SEQ_PTR_PTR_Pos;
-      PWM[1]->SEQ[0].CNT            = (sizeof(pwm_buffer3) / 2) << PWM_SEQ_CNT_CNT_Pos;
-      PWM[1]->SEQ[1].PTR            = (uint32_t)(pwm_buffer4) << PWM_SEQ_PTR_PTR_Pos;
-      PWM[1]->SEQ[1].CNT            = (sizeof(pwm_buffer4) / 2) << PWM_SEQ_CNT_CNT_Pos;
-
-      PWM[1]->SEQ[0].PTR            = (uint32_t)(pwm_buffer5) << PWM_SEQ_PTR_PTR_Pos;
-      PWM[1]->SEQ[0].CNT            = (sizeof(pwm_buffer5) / 2) << PWM_SEQ_CNT_CNT_Pos;
-      PWM[1]->SEQ[1].PTR            = (uint32_t)(pwm_buffer6) << PWM_SEQ_PTR_PTR_Pos;
-      PWM[1]->SEQ[1].CNT            = (sizeof(pwm_buffer6) / 2) << PWM_SEQ_CNT_CNT_Pos;
-
-    }
     // fire off the initial start task
     // due to LOOP == 3, the PWM will automatically cycle between SEQ[0] and SEQ[1] 3 times
     if (i == 1) {

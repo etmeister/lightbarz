@@ -17,7 +17,6 @@
 #define T1H_DUTY  0x800E
 #define CTOPVAL    0x0014
 
-#define NUMV2_LEDS 300
 
 typedef struct {
   uint8_t r;
