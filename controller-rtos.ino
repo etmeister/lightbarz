@@ -23,7 +23,7 @@
 #include <bluefruit.h>
 #include <Arduino.h>
 
-#define LOGO_OFFSET 5
+#define LOGO_OFFSET 0
 #define NUM_LEDS 300
 #define MIN_BRIGHT 0.2f
 #define MAX_BRIGHT 1.0f
@@ -55,7 +55,7 @@ Colors::RGB leds3[NUM_LEDS];
 bool needsRedraw = false;
 bool preset = false;
 float currentBright = DEFAULT_BRIGHT;
-
+int logoOffset = LOGO_OFFSET;
 bool logoSlide = false;
 int8_t logoPos = 0;
 int lastSlide = 0;
@@ -145,6 +145,10 @@ void fade_out(int color_index, int start, int step = 1, int stop = 0)
 
 void setLogo(const char* logo_bytes, const uint8_t num_bytes, uint16_t pos_x = 0, uint16_t pos_y = 0, bool blank = true, bool forceRedraw = true)
 {
+  float brighter = currentBright;
+  if (currentBright < MAX_BRIGHT) {
+    brighter += BRIGHT_STEP;
+  }
   if (blank) {
     for (int led = 0; led < NUM_LEDS; led++)
     {
@@ -166,20 +170,20 @@ void setLogo(const char* logo_bytes, const uint8_t num_bytes, uint16_t pos_x = 0
             {
               if (led_pos < 300)
               {
-                leds[led_pos] = Colors::RGB(255, 255, 255);
+                leds[led_pos] = Colors::RGB(255*brighter, 255*brighter, 255*brighter);
               }
               else if (led_pos < 602)
               {
                 if (led_pos != 300 && led_pos != 301)
                 {
-                  leds2[led_pos - 302] = Colors::RGB(255, 255, 255);
+                  leds2[led_pos - 302] =  Colors::RGB(255*brighter, 255*brighter, 255*brighter);
                 }
               }
               else if (led_pos < 905)
               {
                 if (led_pos != 602 && led_pos != 603 && led_pos != 604)
                 {
-                  leds3[led_pos - 605] = Colors::RGB(255, 255, 255);
+                  leds3[led_pos - 605] =  Colors::RGB(255*brighter, 255*brighter, 255*brighter);
                 }
               }
             }
@@ -217,7 +221,7 @@ void colorCheck()
   // start "off-screen" and scroll off the other side
   for (uint8_t i = 0; i < 98; i++)
   {
-    setLogo(z_chars, z_num_bytes, i - 22, LOGO_OFFSET);
+    setLogo(z_chars, z_num_bytes, i - 22, logoOffset);
     delay(12);
   }
 }
@@ -228,7 +232,7 @@ void redraw()
   if ( xSemaphoreTake( maestroSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
     if (logoSlide && preset) {
       if (logoPos == NUM_COLUMNS+2) logoPos = 0-(num_custom_chars*(FONT_X+1));
-      setLogo(custom_chars, num_custom_chars, logoPos, LOGO_OFFSET, false, false);
+      setLogo(custom_chars, num_custom_chars, logoPos, logoOffset, false, false);
       if (millis() > (lastSlide + logoDelay)) {
       lastSlide = millis();
       logoPos++;
@@ -454,17 +458,15 @@ void callbackPacket(uint16_t handle)
 
     uint8_t replyidx = 0;
     memset(packetbuffer, 0, READ_BUFSIZE);
-    char c = bleuart.read();
+    uint8_t c = bleuart.read8();
     if (c == '!')
     {
       packetbuffer[replyidx] = c;
-      Serial.print(c);
       replyidx++;
     while (bleuart.available())
     {
-    char c = bleuart.read();
+    uint8_t c = bleuart.read8();
       packetbuffer[replyidx] = c;
-      Serial.print(c);
       replyidx++;
     }
     }
@@ -472,7 +474,6 @@ void callbackPacket(uint16_t handle)
 
     if (!replyidx) // no data or timeout
       return;
-    Serial.println("");
     handlePacket(replyidx);
     xSemaphoreGive( packetSem );
   }
@@ -480,8 +481,7 @@ void callbackPacket(uint16_t handle)
 void setDelay(int16_t delayAmount) {
 }
 void handlePacket(uint8_t packetlength) {
-      Serial.println(dbgHeapTotal() - dbgHeapUsed());
-
+  if (packetbuffer[0] == '!' && packetbuffer[1] == 'R' && !trackRpm) return;
   if ( xSemaphoreTake( maestroSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
     if (packetbuffer[0] == '!') {
       // Buttons
@@ -490,14 +490,13 @@ void handlePacket(uint8_t packetlength) {
         bleuart.write("Toggling display");
         toggleMaestro();
       }
-      Serial.println((char*) packetbuffer);
       if (preset) {
-        Serial.println(F("Preset enabled, checking button command"));
         switch (packetbuffer[1]) {
           case 'A':
             Serial.println("animation");
             bleuart.write("animation changed");
-            cycleAnimation();
+            cycleAnimation();             
+      Serial.println(dbgHeapTotal() - dbgHeapUsed());
             break;
           case 'P':
             Serial.println("palette");
@@ -509,6 +508,29 @@ void handlePacket(uint8_t packetlength) {
             bleuart.write("orientation changed");
             cycleOrientation();
             break;
+          case 'D': {
+            int j = 2;
+            char newDelay[4];
+            while (j < packetlength && j < 6) {
+                newDelay[j-2] = packetbuffer[j];
+                j++;    
+            }
+              section->get_animation()->set_timer(atoi(newDelay));
+
+            break;
+          }
+          case 'Y': {
+            int j = 2;
+            char yPos[3];
+            while (j < packetlength && j < 5) {
+                yPos[j-2] = packetbuffer[j];
+                j++;    
+            }
+            logoOffset = atoi(yPos);            
+            Serial.println("logo offset");
+            bleuart.write("logo offset changed");
+            break;
+                      }
           case 'B':
             Serial.print(F("Brightness "));
             if (packetbuffer[2] == 'U') {
@@ -533,11 +555,18 @@ void handlePacket(uint8_t packetlength) {
             break;
           case 'R':
             if (trackRpm) {
-              Serial.print(F("RPM "));
-              Serial.println(packetbuffer[2]);
-              currentBright = (float(packetbuffer[2]) / 255.0f);
+              uint8_t percent = packetbuffer[2];
+              
+              if (packetlength > 3 && packetbuffer[3] != 10) {
+                if (packetbuffer[2] == 194) {
+                    percent = packetbuffer[3];
+                } else if (packetbuffer[2] == 195) {
+                    percent = packetbuffer[3]+64;                  
+                }
+              currentBright = (float(percent) / 255.0f);
               if (currentBright > 1.0f) currentBright = 1.0f;
               needsRedraw = true;
+              }          
             }
             break;
           case 'S':
