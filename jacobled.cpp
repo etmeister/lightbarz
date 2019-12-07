@@ -4,7 +4,7 @@
 
 #define NUM_CHUNKS 12
 #define NUMV2_LEDS 300
-
+// http://rgb-123.com/ws2812-color-output/
 static const uint8_t led_gamma_table[256] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                                              0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2,
                                              2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5,
@@ -67,10 +67,10 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
   PWM[1]->SEQ[1].PTR            = (uint32_t)(pwm_buffer4) << PWM_SEQ_PTR_PTR_Pos;
   PWM[1]->SEQ[1].CNT            = (sizeof(pwm_buffer4) / 2) << PWM_SEQ_CNT_CNT_Pos;
 
-  PWM[1]->SEQ[0].PTR            = (uint32_t)(pwm_buffer5) << PWM_SEQ_PTR_PTR_Pos;
-  PWM[1]->SEQ[0].CNT            = (sizeof(pwm_buffer5) / 2) << PWM_SEQ_CNT_CNT_Pos;
-  PWM[1]->SEQ[1].PTR            = (uint32_t)(pwm_buffer6) << PWM_SEQ_PTR_PTR_Pos;
-  PWM[1]->SEQ[1].CNT            = (sizeof(pwm_buffer6) / 2) << PWM_SEQ_CNT_CNT_Pos;
+  PWM[2]->SEQ[0].PTR            = (uint32_t)(pwm_buffer5) << PWM_SEQ_PTR_PTR_Pos;
+  PWM[2]->SEQ[0].CNT            = (sizeof(pwm_buffer5) / 2) << PWM_SEQ_CNT_CNT_Pos;
+  PWM[2]->SEQ[1].PTR            = (uint32_t)(pwm_buffer6) << PWM_SEQ_PTR_PTR_Pos;
+  PWM[2]->SEQ[1].CNT            = (sizeof(pwm_buffer6) / 2) << PWM_SEQ_CNT_CNT_Pos;
 
   for (int i = 0; i < NUM_CHUNKS; i++) {
     uint16_t bit_index = 0;
@@ -81,10 +81,11 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
     // on even-numbered loops, wait for the first SEQ to end before filling the buffer
     // The odd loops just fill their buffer, all waits occur before/after filling the buffer on even oops
     if (i > 0 && (i % 2) == 0) {
-      while (!PWM[0]->EVENTS_SEQEND[0]) {
+      while (!PWM[2]->EVENTS_SEQEND[0]) {
+
         //yield();
       }
-      PWM[0]->EVENTS_SEQEND[0]    = 0;
+      PWM[2]->EVENTS_SEQEND[0]    = 0;
     }
     // Fill all even or odd buffers at once
     for (uint16_t led_index = (NUMV2_LEDS / NUM_CHUNKS * i); led_index < (NUMV2_LEDS / NUM_CHUNKS + (NUMV2_LEDS / NUM_CHUNKS * i)); led_index++) {
@@ -113,10 +114,10 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
 
     // on even numbered loops, wait for the second SEQ to end before cycling
     if (i > 1 && (i % 2) == 0) {
-      while (!PWM[0]->EVENTS_SEQEND[1]) {
+      while (!PWM[2]->EVENTS_SEQEND[1]) {
         //yield();
       }
-      PWM[0]->EVENTS_SEQEND[1]    = 0;
+      PWM[2]->EVENTS_SEQEND[1]    = 0;
 
     }
 
@@ -133,14 +134,16 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
         PWM[j]->EVENTS_LOOPSDONE = 0;
         PWM[j]->EVENTS_SEQEND[0]    = 0;
         PWM[j]->EVENTS_SEQEND[1]    = 0;
-
+      }
+      for (uint8_t j = 0; j < 3; j++) {
         PWM[j]->TASKS_SEQSTART[0] = 1;
       }
     }
   }
   // Wait for the last round of SEQ[1] to complete
-  while (!PWM[0]->EVENTS_LOOPSDONE) {
-    yield();
+  while (!PWM[0]->EVENTS_LOOPSDONE && !PWM[1]->EVENTS_LOOPSDONE && !PWM[2]->EVENTS_LOOPSDONE) {
+
+    //yield();
   }
 
 
