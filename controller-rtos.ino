@@ -53,7 +53,7 @@ Colors::RGB leds[NUM_LEDS];
 Colors::RGB leds2[NUM_LEDS];
 Colors::RGB leds3[NUM_LEDS];
 
-bool preset = false;
+bool maestroActive = false;
 float currentBright = DEFAULT_BRIGHT;
 int logoOffset = LOGO_OFFSET;
 bool logoSlide = false;
@@ -242,7 +242,7 @@ void colorCheck()
 void redraw()
 {
 
-    if (logoSlide && preset) {
+    if (logoSlide && maestroActive) {
       if (logoPos == NUM_COLUMNS + 2) logoPos = 0 - (num_custom_chars * (FONT_X + 1));
       setLogo(custom_chars, num_custom_chars, logoPos, logoOffset, false, false);
       if (millis() > (lastSlide + logoDelay)) {
@@ -263,7 +263,7 @@ void redraw()
 }
 void (*animatorFunction) ();
 
-void taskAnimate()
+void maestroAnimator()
 {
   if ( xSemaphoreTake( maestroSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
 
@@ -314,15 +314,16 @@ void syncMaestro()
    Command Functions
 
 */
-
+void noopAnimator() {
+}
 void toggleMaestro() {
-  preset = !preset;
-  if (!preset)
+  maestroActive = !maestroActive;
+  if (!maestroActive)
   {
-    Animator.stop();
+    animatorFunction = &noopAnimator;
     setBlack(false);
   } else {
-    Animator.start();
+    animatorFunction = &maestroAnimator;
 
   }
 }
@@ -404,6 +405,7 @@ void setup(void)
   Serial.println(F("LET THERE BE LIGHT!"));
   Serial.println(F("-------------------"));
   maestroSem = xSemaphoreCreateMutex();
+  pixelSem = xSemaphoreCreateMutex();
   packetSem = xSemaphoreCreateMutex();
 
   nrf_gpio_cfg(LED_PIN,
@@ -434,7 +436,7 @@ void setup(void)
   animation.set_timer(animDelay);
   //animation.set_fade(false);
 
-  animatorFunction = &taskAnimate;
+  animatorFunction = &noopAnimator;
   Bluefruit.begin();
   Bluefruit.setTxPower(4); // Check bluefruit.h for supported values
   Bluefruit.setName("LIGHTBARZ");
@@ -502,7 +504,7 @@ void handlePacket(uint8_t packetlength) {
         bleuart.write("Toggling display");
         toggleMaestro();
       }
-      if (preset) {
+      if (maestroActive) {
         switch (packetbuffer[1]) {
           case 'A':
             Serial.println("animation");
@@ -615,7 +617,7 @@ void handlePacket(uint8_t packetlength) {
             if (blue < 0x10)
               Serial.print("0");
             Serial.println(blue, HEX);
-            preset = false;
+            maestroActive = false;
             for (int led = 0; led < NUM_LEDS; led++) {
               leds[led].r = red;
               leds[led].g = green;
