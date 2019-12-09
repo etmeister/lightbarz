@@ -39,7 +39,8 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
 {
 
   NRF_PWM_Type* PWM[3] = {NRF_PWM0, NRF_PWM1, NRF_PWM2};
-  
+  unsigned long loopTime = millis() + 10;
+  unsigned long endTime = loopTime + 5;
   for (int j = 0; j < 3; j++) {
     PWM[j]->COUNTERTOP            = (CTOPVAL << PWM_COUNTERTOP_COUNTERTOP_Pos);
     PWM[j]->DECODER                 = (PWM_DECODER_LOAD_Common << PWM_DECODER_LOAD_Pos) |
@@ -81,11 +82,15 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
     // on even-numbered loops, wait for the first SEQ to end before filling the buffer
     // The odd loops just fill their buffer, all waits occur before/after filling the buffer on even oops
     if (i > 0 && (i % 2) == 0) {
-      while (!PWM[2]->EVENTS_SEQEND[0]) {
-
+      while (!PWM[0]->EVENTS_SEQEND[0]) {
+        Serial.print(0);
         //yield();
+        if ( millis() > loopTime) {
+             Serial.println(F("!! LOOP BREAK 0 !!"));
+             break;
+        }
       }
-      PWM[2]->EVENTS_SEQEND[0]    = 0;
+      PWM[0]->EVENTS_SEQEND[0]    = 0;
     }
     // Fill all even or odd buffers at once
     for (uint16_t led_index = (NUMV2_LEDS / NUM_CHUNKS * i); led_index < (NUMV2_LEDS / NUM_CHUNKS + (NUMV2_LEDS / NUM_CHUNKS * i)); led_index++) {
@@ -114,10 +119,14 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
 
     // on even numbered loops, wait for the second SEQ to end before cycling
     if (i > 1 && (i % 2) == 0) {
-      while (!PWM[2]->EVENTS_SEQEND[1]) {
-        //yield();
+      while (!PWM[0]->EVENTS_SEQEND[1]) {
+        Serial.print("1");
+        if ( millis() > loopTime) {
+             Serial.println(F("!! LOOP BREAK 1 !!"));
+             break;
+        }
       }
-      PWM[2]->EVENTS_SEQEND[1]    = 0;
+      PWM[0]->EVENTS_SEQEND[1]    = 0;
 
     }
 
@@ -134,6 +143,7 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
         PWM[j]->EVENTS_LOOPSDONE = 0;
         PWM[j]->EVENTS_SEQEND[0]    = 0;
         PWM[j]->EVENTS_SEQEND[1]    = 0;
+        PWM[j]->EVENTS_SEQEND[2]    = 0;
       }
       for (uint8_t j = 0; j < 3; j++) {
         PWM[j]->TASKS_SEQSTART[0] = 1;
@@ -142,9 +152,15 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
   }
   // Wait for the last round of SEQ[1] to complete
   while (!PWM[0]->EVENTS_LOOPSDONE && !PWM[1]->EVENTS_LOOPSDONE && !PWM[2]->EVENTS_LOOPSDONE) {
-
+    Serial.print('E');
     //yield();
+            if ( millis() > endTime) {
+             Serial.println(F("!! END LOOP BREAK !!"));
+             break;
+        }
+
   }
+  Serial.println();
 
 
 

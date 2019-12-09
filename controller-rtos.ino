@@ -47,7 +47,6 @@
 SemaphoreHandle_t maestroSem;
 SemaphoreHandle_t pixelSem;
 SemaphoreHandle_t packetSem;
-SoftwareTimer Animator;
 
 Colors::RGB leds[NUM_LEDS];
 Colors::RGB leds2[NUM_LEDS];
@@ -80,7 +79,7 @@ int currentAnimation = 0;
 int currentOrientation = 0;
 int currentPalette = 0;
 
-uint8_t packetbuffer[READ_BUFSIZE + 1];
+char packetbuffer[READ_BUFSIZE + 1];
 // OTA DFU service
 BLEDfu bledfu;
 // Uart over BLE service
@@ -167,10 +166,14 @@ void setBlack(bool forceRedraw = true)
 }
 
 void callWithMutex(void (*function) ()) {
+    // DEBUG Serial.print("Checking semaphore");
     if ( xSemaphoreTake( maestroSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
+        // DEBUG Serial.println(" ... obtained.");
         function();
+        // DEBUG Serial.print("Releasing semaphore");
         xSemaphoreGive( maestroSem );
     }
+    // DEBUG Serial.println(" ... done.");
 }
 void setLogo(const char* logo_bytes, const uint8_t num_bytes, uint16_t pos_x = 0, uint16_t pos_y = 0, bool blank = true, bool forceRedraw = true)
 {
@@ -181,7 +184,7 @@ void setLogo(const char* logo_bytes, const uint8_t num_bytes, uint16_t pos_x = 0
   if (blank) {
       setBlack(false);
   }
-  if ( xSemaphoreTake( pixelSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
+  if ( xSemaphoreTake( pixelSem, ( TickType_t ) 0 ) == pdTRUE ) {
   for (uint8_t i = 0; i < num_bytes; i++)
   {
     if (logo_bytes[i] >= 0) {
@@ -241,7 +244,6 @@ void colorCheck()
 
 void redraw()
 {
-
     if (logoSlide && maestroActive) {
       if (logoPos == NUM_COLUMNS + 2) logoPos = 0 - (num_custom_chars * (FONT_X + 1));
       setLogo(custom_chars, num_custom_chars, logoPos, logoOffset, false, false);
@@ -250,34 +252,35 @@ void redraw()
         logoPos++;
       }
     }
-  if ( xSemaphoreTake( pixelSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
-    //Serial.print("pre-set: ");
-    //Serial.println(millis());
+  if ( xSemaphoreTake( pixelSem, ( TickType_t ) 0 ) == pdTRUE ) {
+    //// DEBUG Serial.print("pre-set: ");
+    //// DEBUG Serial.println(millis());
     led_set_colors(leds, LED_PIN, leds2, LED2_PIN, leds3, LED3_PIN);
-    // Serial.print("post-set: ");
-    //  Serial.println(millis());
+    // // DEBUG Serial.print("post-set: ");
+    //  // DEBUG Serial.println(millis());
 
-    //Serial.println(dbgHeapTotal() - dbgHeapUsed());
+    //// DEBUG Serial.println(dbgHeapTotal() - dbgHeapUsed());
     xSemaphoreGive( pixelSem );
   }
 }
-void (*animatorFunction) ();
 
-void maestroAnimator()
+boolean maestroAnimator()
 {
-  if ( xSemaphoreTake( maestroSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
-
+  boolean updated = false;
+  if ( xSemaphoreTake( maestroSem, ( TickType_t ) 0 ) == pdTRUE ) {
     if (maestro.update(millis()))
     {
       syncMaestro();
+      updated = true;
     }
     xSemaphoreGive( maestroSem );
   }
+  return updated;
 }
 
 void syncMaestro()
 {
-  //Serial.println(F("Maestro update"));
+  //// DEBUG Serial.println(F("Maestro update"));
   uint16_t led = 0;
   if ( xSemaphoreTake( pixelSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
   for (uint8_t x = 0; x < section->get_dimensions().x; x++) {
@@ -314,14 +317,14 @@ void syncMaestro()
    Command Functions
 
 */
-void noopAnimator() {
-}
+bool (*animatorFunction) ();
+bool noopAnimator() { return false; }
 void toggleMaestro() {
   maestroActive = !maestroActive;
   if (!maestroActive)
   {
     animatorFunction = &noopAnimator;
-    setBlack(false);
+    setBlack(true);
   } else {
     animatorFunction = &maestroAnimator;
 
@@ -337,11 +340,15 @@ void cycleAnimation() {
   {
     currentAnimation = 0;
   }
-
+  // DEBUG Serial.println("removing section");
   section->remove_animation(false);
+  Serial.println("Setting animation");
   Animation &animation = section->set_animation(animations[currentAnimation]);
+  Serial.println("Setting palette");
   animation.set_palette(palettes[currentPalette]);
+  Serial.println("Setting orientation");
   animation.set_orientation(orientations[currentOrientation]);
+  Serial.println("Setting delay");
   animation.set_timer(animDelay);
 }
 
@@ -453,8 +460,14 @@ void setup(void)
 
 void loop(void)
 {
-  animatorFunction();
-  redraw();
+  unsigned long timecheck = millis();
+  if (animatorFunction()) {
+    Serial.print(millis()-timecheck);
+    Serial.print(" - ");
+  timecheck = millis();
+      redraw();
+    Serial.println(millis()-timecheck);
+  }
 }
 
 /*
@@ -467,60 +480,45 @@ void callbackPacket(uint16_t handle)
   if ( xSemaphoreTake( packetSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
 
     uint8_t replyidx = 0;
-    memset(packetbuffer, 0, READ_BUFSIZE);
-    uint8_t c = bleuart.read8();
-    if (c == '!')
-    {
-      packetbuffer[replyidx] = c;
-      replyidx++;
-      while (bleuart.available())
-      {
-        uint8_t c = bleuart.read8();
-        packetbuffer[replyidx] = c;
-        replyidx++;
-      }
-    }
-    packetbuffer[replyidx] = 0; // null term
-
-    if (!replyidx) // no data or timeout
-      return;
+    replyidx = bleuart.available();
+    bleuart.read(packetbuffer, READ_BUFSIZE);
+    Serial.println(packetbuffer);
     handlePacket(replyidx);
     xSemaphoreGive( packetSem );
   }
 }
 
-void setDelay(int16_t delayAmount) {
-  section->get_animation()->set_timer(delayAmount);
-  animDelay = delayAmount;
+void setDelay() {
+  section->get_animation()->set_timer(animDelay);
 }
 
 void handlePacket(uint8_t packetlength) {
   if (packetbuffer[0] == '!' && packetbuffer[1] == 'R' && !trackRpm) return;
-  if ( xSemaphoreTake( maestroSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
     if (packetbuffer[0] == '!') {
       // Buttons
       if (packetbuffer[1] == 'T') {
         Serial.println(F("Toggling Maestro"));
         bleuart.write("Toggling display");
         toggleMaestro();
+        
       }
       if (maestroActive) {
         switch (packetbuffer[1]) {
           case 'A':
             Serial.println("animation");
             bleuart.write("animation changed");
-            cycleAnimation();
+            callWithMutex(&cycleAnimation);
             Serial.println(dbgHeapTotal() - dbgHeapUsed());
             break;
           case 'P':
             Serial.println("palette");
             bleuart.write("palette changed");
-            cyclePalette();
+            callWithMutex(&cyclePalette);
             break;
           case 'O':
             Serial.println("orientation");
             bleuart.write("orientation changed");
-            cycleOrientation();
+            callWithMutex(&cycleOrientation);
             break;
           case 'D': {
               int j = 2;
@@ -529,7 +527,8 @@ void handlePacket(uint8_t packetlength) {
                 newDelay[j - 2] = packetbuffer[j];
                 j++;
               }
-              setDelay(atoi(newDelay));
+              animDelay = atoi(newDelay);
+              callWithMutex(&setDelay);
               break;
             }
           case 'Y': {
@@ -600,8 +599,6 @@ void handlePacket(uint8_t packetlength) {
         }
       }
     }
-    xSemaphoreGive( maestroSem );
-  }
   /*
         case 'C':  {
             uint8_t red = packetbuffer[2];
