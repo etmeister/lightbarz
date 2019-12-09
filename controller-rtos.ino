@@ -299,8 +299,8 @@ void syncMaestro()
       currentBright = currentRpm / maxRpm;
       if (currentBright > MAX_BRIGHT) currentBright = MAX_BRIGHT;
       if (currentBright < MIN_BRIGHT) currentBright = MIN_BRIGHT;
-      section->get_animation()->set_timer(animDelay*(MAX_BRIGHT-currentBright+MIN_BRIGHT));
-      }
+      section->get_animation()->set_timer(animDelay * (MAX_BRIGHT - currentBright + MIN_BRIGHT));
+    }
     for (uint8_t x = 0; x < section->get_dimensions().x; x++) {
       for (uint8_t y = 0; y < section->get_dimensions().y; y++) {
         Colors::RGB color = section->get_pixel_color(x, y);
@@ -549,9 +549,12 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
         case 'D': {
             char newDelay[4];
             for (packetPos = 2; packetPos < packetlength; packetPos++) {
-              if (packetbuffer[packetPos] == '!') { packetPos--; break; }
+              if (packetbuffer[packetPos] == '!') {
+                packetPos--;
+                break;
+              }
               newDelay[packetPos - 2] = packetbuffer[packetPos];
-              
+
             }
             animDelay = atoi(newDelay);
             callWithMutex(&setDelay);
@@ -560,7 +563,10 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
         case 'Y': {
             char yPos[3];
             for (packetPos = 2; packetPos < packetlength; packetPos++) {
-              if (packetbuffer[packetPos] == '!') { packetPos--; break; }
+              if (packetbuffer[packetPos] == '!') {
+                packetPos--;
+                break;
+              }
               yPos[packetPos - 2] = packetbuffer[packetPos];
             }
             logoOffset = atoi(yPos);
@@ -594,18 +600,21 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
         case 'R':
           if (trackRpm) {
             for (packetPos = 2; packetPos < packetlength; packetPos++) {
-              if (packetbuffer[packetPos] == '!') { packetPos--; break; }
+              if (packetbuffer[packetPos] == '!') {
+                packetPos--;
+                break;
+              }
               rpmChars[packetPos - 2] = packetbuffer[packetPos];
             }
             numRpmChars = packetPos - 2;
-            if(numRpmChars < 4) rpmChars[3] = 0;
+            if (numRpmChars < 4) rpmChars[3] = 0;
           }
           break;
         case 'S':
           Serial.print(F("Toggle custom string "));
           if (packetlength > 2) {
             Serial.print("on:");
-            for (packetPos= 2; packetPos < packetlength; packetPos++) {
+            for (packetPos = 2; packetPos < packetlength; packetPos++) {
               custom_chars[packetPos - 2] = packetbuffer[packetPos];
             }
             Serial.println(custom_chars);
@@ -620,10 +629,10 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
       }
     }
     if ((packetPos + 1) < packetlength) {
-          Serial.println("recursing");
-          packetPos++;
-          char *secondSet = &packetbuffer[packetPos];
-          handlePacket(secondSet, packetlength-packetPos);
+      Serial.println("recursing");
+      packetPos++;
+      char *secondSet = &packetbuffer[packetPos];
+      handlePacket(secondSet, packetlength - packetPos);
 
     }
   }
