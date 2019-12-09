@@ -23,7 +23,7 @@
 #include <bluefruit.h>
 #include <Arduino.h>
 
-#define LOGO_OFFSET 0
+#define LOGO_OFFSET 7
 #define NUM_LEDS 300
 #define MIN_BRIGHT 0.2f
 #define MAX_BRIGHT 1.0f
@@ -83,7 +83,7 @@ int currentAnimation = 0;
 int currentOrientation = 0;
 int currentPalette = 0;
 
-char packetbuffer[READ_BUFSIZE + 1];
+char packetreceivebuffer[READ_BUFSIZE + 1];
 // OTA DFU service
 BLEDfu bledfu;
 // Uart over BLE service
@@ -297,7 +297,9 @@ void syncMaestro()
     if (trackRpm) {
       currentRpm = atoi(rpmChars);
       currentBright = currentRpm / maxRpm;
-      if (currentBright > 1.0f) currentBright = 1.0f;
+      if (currentBright > MAX_BRIGHT) currentBright = MAX_BRIGHT;
+      if (currentBright < MIN_BRIGHT) currentBright = MIN_BRIGHT;
+      section->get_animation()->set_timer(animDelay*(MAX_BRIGHT-currentBright+MIN_BRIGHT));
       }
     for (uint8_t x = 0; x < section->get_dimensions().x; x++) {
       for (uint8_t y = 0; y < section->get_dimensions().y; y++) {
@@ -488,15 +490,20 @@ void loop(void)
    Bluetooth LE Functions
 
 */
+void callbackAdv() {
+  Serial.println("Connected?");
+}
+
+
 void callbackPacket(uint16_t handle)
 {
   if ( xSemaphoreTake( packetSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
 
     uint8_t replyidx = 0;
     replyidx = bleuart.available();
-    bleuart.read(packetbuffer, replyidx);
+    bleuart.read(packetreceivebuffer, replyidx);
     // DEBUG Serial.println(packetbuffer);
-    handlePacket(replyidx);
+    handlePacket(packetreceivebuffer, replyidx);
     xSemaphoreGive( packetSem );
   }
 }
@@ -505,7 +512,9 @@ void setDelay() {
   section->get_animation()->set_timer(animDelay);
 }
 
-void handlePacket(uint8_t packetlength) {
+void handlePacket(char *packetbuffer, uint8_t packetlength) {
+  Serial.println(packetbuffer);
+  uint8_t packetPos = 0;
   if (packetbuffer[0] == '!' && packetbuffer[1] == 'R' && !trackRpm) return;
   if (packetbuffer[0] == '!') {
     // Buttons
@@ -513,6 +522,7 @@ void handlePacket(uint8_t packetlength) {
       Serial.println(F("Toggling Maestro"));
       bleuart.write("Toggling display");
       toggleMaestro();
+      packetPos = 1;
 
     }
     if (maestroActive) {
@@ -522,21 +532,26 @@ void handlePacket(uint8_t packetlength) {
           bleuart.write("animation changed");
           callWithMutex(&cycleAnimation);
           Serial.println(dbgHeapTotal() - dbgHeapUsed());
+          packetPos = 1;
           break;
         case 'P':
           Serial.println("palette");
           bleuart.write("palette changed");
           callWithMutex(&cyclePalette);
+          packetPos = 1;
           break;
         case 'O':
           Serial.println("orientation");
           bleuart.write("orientation changed");
           callWithMutex(&cycleOrientation);
+          packetPos = 1;
           break;
         case 'D': {
             char newDelay[4];
-            for (uint8_t i = 2; i < packetlength; i++) {
-              newDelay[i - 2] = packetbuffer[i];
+            for (packetPos = 2; packetPos < packetlength; packetPos++) {
+              if (packetbuffer[packetPos] == '!') { packetPos--; break; }
+              newDelay[packetPos - 2] = packetbuffer[packetPos];
+              
             }
             animDelay = atoi(newDelay);
             callWithMutex(&setDelay);
@@ -544,8 +559,9 @@ void handlePacket(uint8_t packetlength) {
           }
         case 'Y': {
             char yPos[3];
-            for (uint8_t i = 2; i < packetlength; i++) {
-              yPos[i - 2] = packetbuffer[i];
+            for (packetPos = 2; packetPos < packetlength; packetPos++) {
+              if (packetbuffer[packetPos] == '!') { packetPos--; break; }
+              yPos[packetPos - 2] = packetbuffer[packetPos];
             }
             logoOffset = atoi(yPos);
             Serial.println("logo offset");
@@ -561,25 +577,27 @@ void handlePacket(uint8_t packetlength) {
             Serial.println("down");
             brightnessDown();
           }
+          packetPos = 2;
           break;
         case 'V':
           if (packetbuffer[2] == '1') {
             Serial.println(F("Tracking RPM for brightness"));
             bleuart.write("tracking rpm");
-
             trackRpm = true;
           } else {
             Serial.println(F("Disabling rpm tracking"));
             bleuart.write("not tracking");
             trackRpm = false;
           }
+          packetPos = 2;
           break;
         case 'R':
           if (trackRpm) {
-            for (uint8_t i = 2; i < packetlength; i++) {
-              rpmChars[i - 2] = packetbuffer[i];
+            for (packetPos = 2; packetPos < packetlength; packetPos++) {
+              if (packetbuffer[packetPos] == '!') { packetPos--; break; }
+              rpmChars[packetPos - 2] = packetbuffer[packetPos];
             }
-            numRpmChars = packetlength - 2;
+            numRpmChars = packetPos - 2;
             if(numRpmChars < 4) rpmChars[3] = 0;
           }
           break;
@@ -587,8 +605,8 @@ void handlePacket(uint8_t packetlength) {
           Serial.print(F("Toggle custom string "));
           if (packetlength > 2) {
             Serial.print("on:");
-            for (uint8_t i = 2; i < packetlength; i++) {
-              custom_chars[i - 2] = packetbuffer[i];
+            for (packetPos= 2; packetPos < packetlength; packetPos++) {
+              custom_chars[packetPos - 2] = packetbuffer[packetPos];
             }
             Serial.println(custom_chars);
             bleuart.write("string set");
@@ -600,6 +618,13 @@ void handlePacket(uint8_t packetlength) {
             logoSlide = false;
           }
       }
+    }
+    if ((packetPos + 1) < packetlength) {
+          Serial.println("recursing");
+          packetPos++;
+          char *secondSet = &packetbuffer[packetPos];
+          handlePacket(secondSet, packetlength-packetPos);
+
     }
   }
   /*
