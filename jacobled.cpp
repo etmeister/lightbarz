@@ -83,10 +83,10 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
     // The odd loops just fill their buffer, all waits occur before/after filling the buffer on even oops
     if (i > 0 && (i % 2) == 0) {
       while (!PWM[0]->EVENTS_SEQEND[0]) {
-        Serial.print(0);
+        // DEBUG Serial.print(0);
         //yield();
         if ( millis() > loopTime) {
-             Serial.println(F("!! LOOP BREAK 0 !!"));
+             // DEBUG Serial.println(F("!! LOOP BREAK 0 !!"));
              break;
         }
       }
@@ -95,7 +95,7 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
     // Fill all even or odd buffers at once
     for (uint16_t led_index = (NUMV2_LEDS / NUM_CHUNKS * i); led_index < (NUMV2_LEDS / NUM_CHUNKS + (NUMV2_LEDS / NUM_CHUNKS * i)); led_index++) {
       
-      //        Serial.println("Filling buffer ");
+      //        // DEBUG Serial.println("Filling buffer ");
       // for each byte, expand each bit to a PWM duty cycle
       for (uint16_t byte_num = 0; byte_num < sizeof(Color8_t); byte_num++) {
         uint8_t val  = led_gamma_table[colors[led_index][byte_num]];
@@ -114,15 +114,15 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
           }
         }
       }
-      //                 Serial.println("Buffer full");
+      //                 // DEBUG Serial.println("Buffer full");
     }
 
     // on even numbered loops, wait for the second SEQ to end before cycling
     if (i > 1 && (i % 2) == 0) {
       while (!PWM[0]->EVENTS_SEQEND[1]) {
-        Serial.print("1");
+        // DEBUG Serial.print("1");
         if ( millis() > loopTime) {
-             Serial.println(F("!! LOOP BREAK 1 !!"));
+             // DEBUG Serial.println(F("!! LOOP BREAK 1 !!"));
              break;
         }
       }
@@ -152,15 +152,15 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
   }
   // Wait for the last round of SEQ[1] to complete
   while (!PWM[0]->EVENTS_LOOPSDONE && !PWM[1]->EVENTS_LOOPSDONE && !PWM[2]->EVENTS_LOOPSDONE) {
-    Serial.print('E');
+    // DEBUG Serial.print('E');
     //yield();
             if ( millis() > endTime) {
-             Serial.println(F("!! END LOOP BREAK !!"));
+             // DEBUG Serial.println(F("!! END LOOP BREAK !!"));
              break;
         }
 
   }
-  Serial.println();
+  // DEBUG Serial.println();
 
 
 
