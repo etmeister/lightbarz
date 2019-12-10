@@ -156,14 +156,17 @@ void fade_out(int color_index, int start, int step = 1, int stop = 0)
 }
 
 
-void setBlack(bool forceRedraw = true)
-{
+
+
+
+void setColor(Colors::RGB color, bool forceRedraw = true) {
+
   if ( xSemaphoreTake( pixelSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
     for (int led = 0; led < NUM_LEDS; led++)
     {
-      leds[led] = ColorPresets::Black;
-      leds2[led] = ColorPresets::Black;
-      leds3[led] = ColorPresets::Black;
+      leds[led] = color;
+      leds2[led] = color;
+      leds3[led] = color;
     }
     xSemaphoreGive(pixelSem);
     if (forceRedraw)
@@ -172,7 +175,9 @@ void setBlack(bool forceRedraw = true)
     }
   }
 }
-
+void setBlack(bool forceRedraw = true) {
+  setColor(ColorPresets::Black, forceRedraw);
+}
 void callWithMutex(void (*function) ()) {
   // DEBUG Serial.print("Checking semaphore");
   if ( xSemaphoreTake( maestroSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
@@ -251,10 +256,11 @@ void colorCheck()
 
 void redraw()
 {
-  if (maestroActive) {
-    if (trackRpm) {
-      setLogo(rpmChars, numRpmChars, rpmPos, logoOffset, false, false);
-    } else if (logoSlide ) {
+
+  if (trackRpm) {
+    setLogo(rpmChars, numRpmChars, rpmPos, logoOffset, false, false);
+  } else {
+    if (logoSlide && maestroActive ) {
       if (logoPos == NUM_COLUMNS + 2) logoPos = 0 - (num_custom_chars * (FONT_X + 1));
       setLogo(custom_chars, num_custom_chars, logoPos, logoOffset, false, false);
       if (millis() > (lastSlide + logoDelay)) {
@@ -292,10 +298,10 @@ uint8_t kittColorChannel = 0;
 uint8_t kittTailLength = 20;
 int kittLastRun = 0;
 uint8_t kittDelay = 30;
-uint8_t kittPosition = 0;
+int8_t kittPosition = 0;
 uint8_t kittHeight = 2;
 boolean kittDirection = true;
-uint8_t kittEndFactor = 1;
+float kittEndFactor = 2;
 
 boolean kitt() {
   if ( kittLastRun + kittDelay <= millis()) {
@@ -307,8 +313,9 @@ boolean kitt() {
         colorValue = 0;
       }
       Colors::RGB color = {0, 0, 0};
-      for (uint8_t x = kittPosition; x > (kittPosition - kittTailLength); x--)
+      for (int8_t x = kittPosition; x >= (kittPosition - kittTailLength); x--)
       {
+      if (x >= 0 && x <= NUM_COLUMNS) {
         switch (kittColorChannel)
         {
           case 0:
@@ -325,12 +332,12 @@ boolean kitt() {
           int16_t led_pos = x * NUM_ROWS + y;
           setLedColor(led_pos, color);
         }
+        }
         if (kittDirection) {
           colorValue = colorValue - (255 / kittTailLength);
         } else {
           colorValue = colorValue + (255 / kittTailLength);
         }
-        if (x == 0) break;
       }
       xSemaphoreGive(pixelSem);
       kittLastRun = millis();
@@ -345,8 +352,9 @@ boolean kitt() {
         // Stay the end longer;
         kittLastRun += kittDelay * kittEndFactor;
       }
-      if (kittPosition > NUM_COLUMNS) {
+      if (kittDirection && kittPosition > NUM_COLUMNS) {
         kittDirection = !kittDirection;
+        kittPosition = NUM_COLUMNS + kittTailLength;
         // Stay the end longer;
         kittLastRun += kittDelay * kittEndFactor;
       }
@@ -402,14 +410,26 @@ void toggleMaestro() {
   maestroActive = !maestroActive;
   if (!maestroActive)
   {
-    animatorFunction = &noopAnimator;
-    setBlack(true);
+    disableAnimator();
   } else {
     animatorFunction = &maestroAnimator;
 
   }
 }
 
+void enableKitt() {
+  disableAnimator();
+  setBlack(true);
+  animatorFunction = &kitt;
+}
+
+void disableAnimator() {
+  animatorFunction = &noopAnimator;
+  trackRpm = false;
+  maestroActive = false;
+  logoSlide = false;
+  setBlack(true);
+}
 void cycleAnimation() {
   if (currentAnimation < (numAnimations - 1))
   {
@@ -522,7 +542,7 @@ void setup(void)
   animation.set_timer(animDelay);
   //animation.set_fade(false);
 
-  animatorFunction = &kitt;
+  animatorFunction = &noopAnimator;
   Bluefruit.begin();
   Bluefruit.setTxPower(4); // Check bluefruit.h for supported values
   Bluefruit.setName("LIGHTBARZ");
@@ -579,121 +599,137 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
   if (packetbuffer[0] == '!' && packetbuffer[1] == 'R' && !trackRpm) return;
   if (packetbuffer[0] == '!') {
     // Buttons
-    if (packetbuffer[1] == 'T') {
-      Serial.println(F("Toggling Maestro"));
-      bleuart.write("Toggling display");
-      toggleMaestro();
-      packetPos = 1;
+    switch (packetbuffer[1]) {
+      case 'A':
+        Serial.println("animation");
+        bleuart.write("animation changed");
+        callWithMutex(&cycleAnimation);
+        Serial.println(dbgHeapTotal() - dbgHeapUsed());
+        packetPos = 1;
+        break;
+      case 'B':
+        Serial.print(F("Brightness "));
+        if (packetbuffer[2] == 'U') {
+          Serial.println("up");
+          brightnessUp();
+        } else {
+          Serial.println("down");
+          brightnessDown();
+        }
+        packetPos = 2;
+        break;
+      case 'C':  {
+          uint8_t red = packetbuffer[2];
+          uint8_t green = packetbuffer[3];
+          uint8_t blue = packetbuffer[4];
+          Serial.print("RGB #");
+          if (red < 0x10)
+            Serial.print("0");
+          Serial.print(red, HEX);
+          if (green < 0x10)
+            Serial.print("0");
+          Serial.print(green, HEX);
+          if (blue < 0x10)
+            Serial.print("0");
+          Serial.println(blue, HEX);
+          disableAnimator();
+          setColor(Colors::RGB(red, green, blue), true);
+          packetPos = 4;
+          break;
+        }
+      case 'D': {
+          char newDelay[4];
+          for (packetPos = 2; packetPos < packetlength; packetPos++) {
+            if (packetbuffer[packetPos] == '!') {
+              packetPos--;
+              break;
+            }
+            newDelay[packetPos - 2] = packetbuffer[packetPos];
 
-    }
-    if (maestroActive) {
-      switch (packetbuffer[1]) {
-        case 'A':
-          Serial.println("animation");
-          bleuart.write("animation changed");
-          callWithMutex(&cycleAnimation);
-          Serial.println(dbgHeapTotal() - dbgHeapUsed());
-          packetPos = 1;
+          }
+          animDelay = atoi(newDelay);
+          callWithMutex(&setDelay);
           break;
-        case 'I':
-          Serial.println("invert strip");
-          bleuart.write("strip inverted");
-          invertStrips = !invertStrips;
-          packetPos = 1;
-          break;
-        case 'P':
-          Serial.println("palette");
-          bleuart.write("palette changed");
-          callWithMutex(&cyclePalette);
-          packetPos = 1;
-          break;
-        case 'O':
-          Serial.println("orientation");
-          bleuart.write("orientation changed");
-          callWithMutex(&cycleOrientation);
-          packetPos = 1;
-          break;
-        case 'D': {
-            char newDelay[4];
-            for (packetPos = 2; packetPos < packetlength; packetPos++) {
-              if (packetbuffer[packetPos] == '!') {
-                packetPos--;
-                break;
-              }
-              newDelay[packetPos - 2] = packetbuffer[packetPos];
-
+        }
+      case 'I':
+        Serial.println("invert strip");
+        bleuart.write("strip inverted");
+        invertStrips = !invertStrips;
+        packetPos = 1;
+        break;
+      case 'K':
+        Serial.println("Enabling kitt");
+        enableKitt();
+        packetPos = 1;
+        break;
+      case 'M':
+        Serial.println(F("Toggling Maestro"));
+        bleuart.write("Toggling display");
+        toggleMaestro();
+        packetPos = 1;
+        break;
+      case 'O':
+        Serial.println("orientation");
+        bleuart.write("orientation changed");
+        callWithMutex(&cycleOrientation);
+        packetPos = 1;
+        break;
+      case 'P':
+        Serial.println("palette");
+        bleuart.write("palette changed");
+        callWithMutex(&cyclePalette);
+        packetPos = 1;
+        break;
+      case 'R':
+        if (trackRpm) {
+          for (packetPos = 2; packetPos < packetlength; packetPos++) {
+            if (packetbuffer[packetPos] == '!') {
+              packetPos--;
+              break;
             }
-            animDelay = atoi(newDelay);
-            callWithMutex(&setDelay);
-            break;
+            rpmChars[packetPos - 2] = packetbuffer[packetPos];
           }
-        case 'Y': {
-            char yPos[3];
-            for (packetPos = 2; packetPos < packetlength; packetPos++) {
-              if (packetbuffer[packetPos] == '!') {
-                packetPos--;
-                break;
-              }
-              yPos[packetPos - 2] = packetbuffer[packetPos];
+          numRpmChars = packetPos - 2;
+          if (numRpmChars < 4) rpmChars[3] = 0;
+        }
+        break;
+      case 'S':
+        Serial.print(F("Toggle custom string "));
+        if (packetlength > 2) {
+          Serial.print("on:");
+          for (packetPos = 2; packetPos < packetlength; packetPos++) {
+            custom_chars[packetPos - 2] = packetbuffer[packetPos];
+          }
+          Serial.println(custom_chars);
+          bleuart.write("string set");
+          num_custom_chars = packetlength - 2;
+          logoPos = 0 - (num_custom_chars * (FONT_X + 1));
+          logoSlide = true;
+        } else {
+          Serial.println("off");
+          logoSlide = false;
+        }
+        break;
+      case 'V':
+        Serial.println(F("Toggling rpm tracking"));
+        bleuart.write("tracking rpm toggled");
+        trackRpm = !trackRpm;
+        packetPos = 1;
+        break;
+      case 'Y': {
+          char yPos[3];
+          for (packetPos = 2; packetPos < packetlength; packetPos++) {
+            if (packetbuffer[packetPos] == '!') {
+              packetPos--;
+              break;
             }
-            logoOffset = atoi(yPos);
-            Serial.println("logo offset");
-            bleuart.write("logo offset changed");
-            break;
+            yPos[packetPos - 2] = packetbuffer[packetPos];
           }
-        case 'B':
-          Serial.print(F("Brightness "));
-          if (packetbuffer[2] == 'U') {
-            Serial.println("up");
-            brightnessUp();
-          } else {
-            Serial.println("down");
-            brightnessDown();
-          }
-          packetPos = 2;
+          logoOffset = atoi(yPos);
+          Serial.println("logo offset");
+          bleuart.write("logo offset changed");
           break;
-        case 'V':
-          if (packetbuffer[2] == '1') {
-            Serial.println(F("Tracking RPM for brightness"));
-            bleuart.write("tracking rpm");
-            trackRpm = true;
-          } else {
-            Serial.println(F("Disabling rpm tracking"));
-            bleuart.write("not tracking");
-            trackRpm = false;
-          }
-          packetPos = 2;
-          break;
-        case 'R':
-          if (trackRpm) {
-            for (packetPos = 2; packetPos < packetlength; packetPos++) {
-              if (packetbuffer[packetPos] == '!') {
-                packetPos--;
-                break;
-              }
-              rpmChars[packetPos - 2] = packetbuffer[packetPos];
-            }
-            numRpmChars = packetPos - 2;
-            if (numRpmChars < 4) rpmChars[3] = 0;
-          }
-          break;
-        case 'S':
-          Serial.print(F("Toggle custom string "));
-          if (packetlength > 2) {
-            Serial.print("on:");
-            for (packetPos = 2; packetPos < packetlength; packetPos++) {
-              custom_chars[packetPos - 2] = packetbuffer[packetPos];
-            }
-            Serial.println(custom_chars);
-            bleuart.write("string set");
-            num_custom_chars = packetlength - 2;
-            logoPos = 0 - (num_custom_chars * (FONT_X + 1));
-            logoSlide = true;
-          } else {
-            Serial.println("off");
-            logoSlide = false;
-          }
-      }
+        }
     }
     packetPos++;
     if (packetPos < packetlength) {
@@ -701,33 +737,8 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
       char *secondSet = &packetbuffer[packetPos];
       handlePacket(secondSet, packetlength - packetPos);
     }
+
   }
-  /*
-        case 'C':  {
-            uint8_t red = packetbuffer[2];
-            uint8_t green = packetbuffer[3];
-            uint8_t blue = packetbuffer[4];
-            Serial.print("RGB #");
-            if (red < 0x10)
-              Serial.print("0");
-            Serial.print(red, HEX);
-            if (green < 0x10)
-              Serial.print("0");
-            Serial.print(green, HEX);
-            if (blue < 0x10)
-              Serial.print("0");
-            Serial.println(blue, HEX);
-            maestroActive = false;
-            for (int led = 0; led < NUM_LEDS; led++) {
-              leds[led].r = red;
-              leds[led].g = green;
-              leds[led].b = blue;
-              leds2[led] = leds[led];
-              leds3[led] = leds[led];
-            }
-            break;
-          }
-      }*/
 }
 
 void startAdv(void)
