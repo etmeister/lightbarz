@@ -53,7 +53,7 @@ Colors::RGB leds2[NUM_LEDS];
 Colors::RGB leds3[NUM_LEDS];
 char rpmChars[4];
 uint8_t numRpmChars = 0;
-int8_t rpmPos = 0; // 26
+int8_t rpmPos = 26; // 26
 bool maestroActive = false;
 float currentBright = DEFAULT_BRIGHT;
 int logoOffset = LOGO_OFFSET;
@@ -62,7 +62,7 @@ int8_t logoPos = 8;
 int lastSlide = 0;
 int logoDelay = 20;
 uint16_t animDelay = DEFAULT_TIMER;
-
+bool invertStrips = false;
 bool trackRpm = false;
 uint16_t currentRpm = 0;
 float maxRpm = 7600.0f;
@@ -84,8 +84,7 @@ int currentOrientation = 0;
 int currentPalette = 0;
 
 char packetreceivebuffer[READ_BUFSIZE + 1];
-// OTA DFU service
-BLEDfu bledfu;
+
 // Uart over BLE service
 BLEUart bleuart;
 
@@ -95,6 +94,11 @@ BLEUart bleuart;
     Animation helpers
 
 */
+
+
+// Move cursor to the location of the next letter based on the font size.
+
+
 
 void fade_set(int color_value, int color_index, bool forceRedraw = true)
 {
@@ -179,6 +183,7 @@ void callWithMutex(void (*function) ()) {
   }
   // DEBUG Serial.println(" ... done.");
 }
+
 void setLogo(const char* logo_bytes, const uint8_t num_bytes, uint16_t pos_x = 0, uint16_t pos_y = 0, bool blank = true, bool forceRedraw = true)
 {
   float brighter = currentBright;
@@ -200,27 +205,7 @@ void setLogo(const char* logo_bytes, const uint8_t num_bytes, uint16_t pos_x = 0
           for (uint16_t row = 0; row < FONT_Y; row++) {
             if ((current_char[column] >> row) & 1) {
               int16_t led_pos = (pos_x + column) * NUM_ROWS + pos_y + row;
-              if (led_pos >= 0)
-              {
-                if (led_pos < 300)
-                {
-                  leds[led_pos] = Colors::RGB(255 * brighter, 255 * brighter, 255 * brighter);
-                }
-                else if (led_pos < 602)
-                {
-                  if (led_pos != 300 && led_pos != 301)
-                  {
-                    leds2[led_pos - 302] =  Colors::RGB(255 * brighter, 255 * brighter, 255 * brighter);
-                  }
-                }
-                else if (led_pos < 905)
-                {
-                  if (led_pos != 602 && led_pos != 603 && led_pos != 604)
-                  {
-                    leds3[led_pos - 605] =  Colors::RGB(255 * brighter, 255 * brighter, 255 * brighter);
-                  }
-                }
-              }
+              setLedColor(led_pos, Colors::RGB(255 * brighter, 255 * brighter, 255 * brighter));
             }
           }
         }
@@ -235,6 +220,22 @@ void setLogo(const char* logo_bytes, const uint8_t num_bytes, uint16_t pos_x = 0
   }
 }
 
+void setLedColor(int16_t led_pos, Colors::RGB color) {
+  if (invertStrips) led_pos = 905 - led_pos;
+  if (led_pos >= 0) {
+    if (led_pos < 300) {
+      leds[led_pos] = color;
+    } else if (led_pos < 602) {
+      if (led_pos != 300 && led_pos != 301) {
+        leds2[led_pos - 302] =  color;
+      }
+    } else if (led_pos < 905) {
+      if (led_pos != 602 && led_pos != 603 && led_pos != 604) {
+        leds3[led_pos - 605] =  color;
+      }
+    }
+  }
+}
 
 void colorCheck()
 {
@@ -287,6 +288,74 @@ boolean maestroAnimator()
   }
   return updated;
 }
+uint8_t kittColorChannel = 0;
+uint8_t kittTailLength = 20;
+int kittLastRun = 0;
+uint8_t kittDelay = 30;
+uint8_t kittPosition = 0;
+uint8_t kittHeight = 2;
+boolean kittDirection = true;
+uint8_t kittEndFactor = 1;
+
+boolean kitt() {
+  if ( kittLastRun + kittDelay <= millis()) {
+    if (xSemaphoreTake( pixelSem, ( TickType_t ) 0 ) == pdTRUE ) {
+      uint8_t colorValue;
+      if (kittDirection) {
+        colorValue = 255;
+      } else {
+        colorValue = 0;
+      }
+      Colors::RGB color = {0, 0, 0};
+      for (uint8_t x = kittPosition; x > (kittPosition - kittTailLength); x--)
+      {
+        switch (kittColorChannel)
+        {
+          case 0:
+            color.r = colorValue;
+            break;
+          case 1:
+            color.g = colorValue;
+            break;
+          case 2:
+            color.b = colorValue;
+            break;
+        }
+        for (uint8_t y = NUM_ROWS / 2 - kittHeight / 2; y < NUM_ROWS / 2 + kittHeight / 2; y++) {
+          int16_t led_pos = x * NUM_ROWS + y;
+          setLedColor(led_pos, color);
+        }
+        if (kittDirection) {
+          colorValue = colorValue - (255 / kittTailLength);
+        } else {
+          colorValue = colorValue + (255 / kittTailLength);
+        }
+        if (x == 0) break;
+      }
+      xSemaphoreGive(pixelSem);
+      kittLastRun = millis();
+      if (kittDirection) {
+        kittPosition++;
+      } else {
+        kittPosition--;
+      }
+      if (!kittDirection && kittPosition < kittTailLength) {
+        kittDirection = !kittDirection;
+        kittPosition = 0;
+        // Stay the end longer;
+        kittLastRun += kittDelay * kittEndFactor;
+      }
+      if (kittPosition > NUM_COLUMNS) {
+        kittDirection = !kittDirection;
+        // Stay the end longer;
+        kittLastRun += kittDelay * kittEndFactor;
+      }
+      return true;
+
+    }
+  }
+  return false;
+}
 
 void syncMaestro()
 {
@@ -307,17 +376,7 @@ void syncMaestro()
         color.r = min(255, color.r * currentBright);
         color.g = min(255, color.g * currentBright);
         color.b = min(255, color.b * currentBright);
-        if (led < 300) {
-          leds[led] = color;
-        } else if (led < 602) {
-          if (led != 300 && led != 301) {
-            leds2[led - 302] = color;
-          }
-        } else if (led < 905) {
-          if (led != 602 && led != 603 && led != 604) {
-            leds3[led - 605] = color;
-          }
-        }
+        setLedColor(led, color);
         led++;
       }
     }
@@ -463,7 +522,7 @@ void setup(void)
   animation.set_timer(animDelay);
   //animation.set_fade(false);
 
-  animatorFunction = &noopAnimator;
+  animatorFunction = &kitt;
   Bluefruit.begin();
   Bluefruit.setTxPower(4); // Check bluefruit.h for supported values
   Bluefruit.setName("LIGHTBARZ");
@@ -471,6 +530,7 @@ void setup(void)
   bleuart.begin();
   bleuart.setRxCallback(callbackPacket);
   // Set up and start advertising
+
   startAdv();
 
   //logoSlide = true;
@@ -501,6 +561,7 @@ void callbackPacket(uint16_t handle)
 
     uint8_t replyidx = 0;
     replyidx = bleuart.available();
+    if (replyidx > 20) replyidx = 20;
     bleuart.read(packetreceivebuffer, replyidx);
     // DEBUG Serial.println(packetbuffer);
     handlePacket(packetreceivebuffer, replyidx);
@@ -532,6 +593,12 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
           bleuart.write("animation changed");
           callWithMutex(&cycleAnimation);
           Serial.println(dbgHeapTotal() - dbgHeapUsed());
+          packetPos = 1;
+          break;
+        case 'I':
+          Serial.println("invert strip");
+          bleuart.write("strip inverted");
+          invertStrips = !invertStrips;
           packetPos = 1;
           break;
         case 'P':
@@ -628,12 +695,11 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
           }
       }
     }
-    if ((packetPos + 1) < packetlength) {
+    packetPos++;
+    if (packetPos < packetlength) {
       Serial.println("recursing");
-      packetPos++;
       char *secondSet = &packetbuffer[packetPos];
       handlePacket(secondSet, packetlength - packetPos);
-
     }
   }
   /*
