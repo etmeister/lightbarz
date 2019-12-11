@@ -315,23 +315,23 @@ boolean kitt() {
       Colors::RGB color = {0, 0, 0};
       for (int8_t x = kittPosition; x >= (kittPosition - kittTailLength); x--)
       {
-      if (x >= 0 && x <= NUM_COLUMNS) {
-        switch (kittColorChannel)
-        {
-          case 0:
-            color.r = colorValue;
-            break;
-          case 1:
-            color.g = colorValue;
-            break;
-          case 2:
-            color.b = colorValue;
-            break;
-        }
-        for (uint8_t y = NUM_ROWS / 2 - kittHeight / 2; y < NUM_ROWS / 2 + kittHeight / 2; y++) {
-          int16_t led_pos = x * NUM_ROWS + y;
-          setLedColor(led_pos, color);
-        }
+        if (x >= 0 && x <= NUM_COLUMNS) {
+          switch (kittColorChannel)
+          {
+            case 0:
+              color.r = colorValue;
+              break;
+            case 1:
+              color.g = colorValue;
+              break;
+            case 2:
+              color.b = colorValue;
+              break;
+          }
+          for (uint8_t y = logoOffset; y < logoOffset + kittHeight; y++) {
+            int16_t led_pos = x * NUM_ROWS + y;
+            setLedColor(led_pos, color);
+          }
         }
         if (kittDirection) {
           colorValue = colorValue - (255 / kittTailLength);
