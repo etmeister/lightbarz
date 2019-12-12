@@ -53,7 +53,7 @@ Colors::RGB leds2[NUM_LEDS];
 Colors::RGB leds3[NUM_LEDS];
 char rpmChars[4];
 uint8_t numRpmChars = 0;
-int8_t rpmPos = 26; // 26
+int8_t rpmPos = 0; // 26
 bool maestroActive = false;
 float currentBright = DEFAULT_BRIGHT;
 int logoOffset = LOGO_OFFSET;
@@ -183,6 +183,17 @@ void callWithMutex(void (*function) ()) {
   if ( xSemaphoreTake( maestroSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
     // DEBUG Serial.println(" ... obtained.");
     function();
+    // DEBUG Serial.print("Releasing semaphore");
+    xSemaphoreGive( maestroSem );
+  }
+  // DEBUG Serial.println(" ... done.");
+}
+
+void callCharWithMutex(void (*function) (char*, uint8_t&), char *arguments, uint8_t &argumentLength) {
+  // DEBUG Serial.print("Checking semaphore");
+  if ( xSemaphoreTake( maestroSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
+    // DEBUG Serial.println(" ... obtained.");
+    function(arguments, argumentLength);
     // DEBUG Serial.print("Releasing semaphore");
     xSemaphoreGive( maestroSem );
   }
@@ -439,6 +450,15 @@ void cycleAnimation() {
   {
     currentAnimation = 0;
   }
+  updateAnimation();
+}
+
+void setAnimation(char* arguments, uint8_t &argumentLength) {
+  currentAnimation = (atoi(arguments) % numAnimations);
+  updateAnimation();
+}
+
+void updateAnimation() {
   // DEBUG Serial.println("removing section");
   section->remove_animation(false);
   Serial.println("Setting animation");
@@ -460,6 +480,11 @@ void cyclePalette() {
   {
     currentPalette = 0;
   }
+  section->get_animation()->set_palette(palettes[currentPalette]);
+}
+
+void setPalette(char* arguments, uint8_t &argumentLength) {
+  currentPalette = (atoi(arguments) % numPalettes);
   section->get_animation()->set_palette(palettes[currentPalette]);
 }
 
@@ -508,6 +533,7 @@ void setup(void)
   Serial.begin(115200);
   while (!Serial)
     delay(10); // for nrf52840 with native usb
+  Serial.println("OTA UPDATE COMPLETE");
   Serial.println(F("LET THERE BE LIGHT!"));
   Serial.println(F("-------------------"));
   maestroSem = xSemaphoreCreateMutex();
@@ -579,10 +605,10 @@ void callbackPacket(uint16_t handle)
 {
   if ( xSemaphoreTake( packetSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
 
-    uint8_t replyidx = 0;
-    replyidx = bleuart.available();
-    if (replyidx > 20) replyidx = 20;
-    bleuart.read(packetreceivebuffer, replyidx);
+    uint8_t replyidx = bleuart.available();
+    if (replyidx > READ_BUFSIZE) replyidx = READ_BUFSIZE;
+    memset(packetreceivebuffer, 0, READ_BUFSIZE);
+    bleuart.read(packetreceivebuffer, READ_BUFSIZE);
     // DEBUG Serial.println(packetbuffer);
     handlePacket(packetreceivebuffer, replyidx);
     xSemaphoreGive( packetSem );
@@ -597,31 +623,58 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
   Serial.println(packetbuffer);
   uint8_t packetPos = 0;
   if (packetbuffer[0] == '!' && packetbuffer[1] == 'R' && !trackRpm) return;
-  if (packetbuffer[0] == '!') {
+  if (packetbuffer[0] == '!' && packetlength > 1) {
     // Buttons
-    switch (packetbuffer[1]) {
+    char command = packetbuffer[1];
+    packetPos = 1;
+    uint8_t argumentLength = 0;
+    char *arguments;
+    if (packetlength > 2) {
+      arguments = &packetbuffer[2];
+      for (argumentLength = 1; argumentLength + packetPos < packetlength; argumentLength++) {
+        if (packetbuffer[packetPos + argumentLength] == '!') {
+          argumentLength--;
+          break;
+        }
+      }
+      packetPos = packetPos + argumentLength;
+    }
+    switch (command) {
+      case '!':
+        if (packetbuffer[2] == 'D' && packetbuffer[3] == 'F' && packetbuffer[4] == 'U') {
+          Serial.println("PREPARING FOR OTA");
+          bleuart.write("PREPARING FOR OTA");
+          disableAnimator();
+          delay(10);
+          fade_in(1, (currentBright * 255), 4);
+          fade_out(1, (currentBright * 255 - 1), 4);
+          enterOTADfu();
+          break;
+        }
       case 'A':
         Serial.println("animation");
         bleuart.write("animation changed");
-        callWithMutex(&cycleAnimation);
+        if (argumentLength > 0) { 
+            callCharWithMutex(&setAnimation, arguments, argumentLength);
+        } else {
+            callWithMutex(&cycleAnimation);
+        }
         Serial.println(dbgHeapTotal() - dbgHeapUsed());
-        packetPos = 1;
         break;
       case 'B':
         Serial.print(F("Brightness "));
-        if (packetbuffer[2] == 'U') {
+        if (arguments[0] == 'U') {
           Serial.println("up");
           brightnessUp();
         } else {
           Serial.println("down");
           brightnessDown();
         }
-        packetPos = 2;
         break;
       case 'C':  {
-          uint8_t red = packetbuffer[2];
-          uint8_t green = packetbuffer[3];
-          uint8_t blue = packetbuffer[4];
+          uint8_t red = arguments[0];
+          uint8_t green = arguments[1];
+          uint8_t blue = arguments[2];
           Serial.print("RGB #");
           if (red < 0x10)
             Serial.print("0");
@@ -633,21 +686,14 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
             Serial.print("0");
           Serial.println(blue, HEX);
           disableAnimator();
-          setColor(Colors::RGB(red, green, blue), true);
           packetPos = 4;
           break;
         }
       case 'D': {
-          char newDelay[4];
-          for (packetPos = 2; packetPos < packetlength; packetPos++) {
-            if (packetbuffer[packetPos] == '!') {
-              packetPos--;
-              break;
-            }
-            newDelay[packetPos - 2] = packetbuffer[packetPos];
-
-          }
-          animDelay = atoi(newDelay);
+        
+        Serial.println("delay");
+        bleuart.write("delay changed");
+          animDelay = atoi(arguments);
           callWithMutex(&setDelay);
           break;
         }
@@ -655,54 +701,44 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
         Serial.println("invert strip");
         bleuart.write("strip inverted");
         invertStrips = !invertStrips;
-        packetPos = 1;
         break;
       case 'K':
         Serial.println("Enabling kitt");
         enableKitt();
-        packetPos = 1;
         break;
       case 'M':
         Serial.println(F("Toggling Maestro"));
         bleuart.write("Toggling display");
         toggleMaestro();
-        packetPos = 1;
         break;
       case 'O':
         Serial.println("orientation");
         bleuart.write("orientation changed");
         callWithMutex(&cycleOrientation);
-        packetPos = 1;
         break;
       case 'P':
         Serial.println("palette");
         bleuart.write("palette changed");
-        callWithMutex(&cyclePalette);
-        packetPos = 1;
-        break;
+        if (argumentLength > 0) { 
+            callCharWithMutex(&setPalette, arguments, argumentLength);
+        } else {
+            callWithMutex(&cyclePalette);
+        }        break;
       case 'R':
         if (trackRpm) {
-          for (packetPos = 2; packetPos < packetlength; packetPos++) {
-            if (packetbuffer[packetPos] == '!') {
-              packetPos--;
-              break;
-            }
-            rpmChars[packetPos - 2] = packetbuffer[packetPos];
-          }
-          numRpmChars = packetPos - 2;
+          memcpy(rpmChars, arguments, min(4, argumentLength));
+          numRpmChars = min(4, argumentLength);
           if (numRpmChars < 4) rpmChars[3] = 0;
         }
         break;
       case 'S':
         Serial.print(F("Toggle custom string "));
-        if (packetlength > 2) {
+        if (argumentLength > 0) {
           Serial.print("on:");
-          for (packetPos = 2; packetPos < packetlength; packetPos++) {
-            custom_chars[packetPos - 2] = packetbuffer[packetPos];
-          }
+          memcpy(custom_chars, arguments, min(18, argumentLength));
+          num_custom_chars = min(18, argumentLength);
           Serial.println(custom_chars);
           bleuart.write("string set");
-          num_custom_chars = packetlength - 2;
           logoPos = 0 - (num_custom_chars * (FONT_X + 1));
           logoSlide = true;
         } else {
@@ -714,19 +750,11 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
         Serial.println(F("Toggling rpm tracking"));
         bleuart.write("tracking rpm toggled");
         trackRpm = !trackRpm;
-        packetPos = 1;
         break;
       case 'Y': {
-          char yPos[3];
-          for (packetPos = 2; packetPos < packetlength; packetPos++) {
-            if (packetbuffer[packetPos] == '!') {
-              packetPos--;
-              break;
-            }
-            yPos[packetPos - 2] = packetbuffer[packetPos];
-          }
-          logoOffset = atoi(yPos);
+          logoOffset = atoi(arguments);
           Serial.println("logo offset");
+          Serial.println(logoOffset);
           bleuart.write("logo offset changed");
           break;
         }
