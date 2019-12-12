@@ -36,9 +36,16 @@
 #define FONT_Y 5
 #define REFRESH 15
 #define DEFAULT_TIMER 120
+#define LOGO_DELAY 20
 #define LED_PIN 2
 #define LED2_PIN 3
 #define LED3_PIN 5
+#define MAX_RPM 7600.0f
+#define RPM_POS 26
+#define NUM_ANIMATIONS 6
+#define NUM_ORIENTATIONS 2
+
+
 //    READ_BUFSIZE            Size of the read buffer for incoming packets
 #define READ_BUFSIZE (20)
 
@@ -53,19 +60,17 @@ Colors::RGB leds2[NUM_LEDS];
 Colors::RGB leds3[NUM_LEDS];
 char rpmChars[4];
 uint8_t numRpmChars = 0;
-int8_t rpmPos = 0; // 26
 bool maestroActive = false;
 float currentBright = DEFAULT_BRIGHT;
 int logoOffset = LOGO_OFFSET;
 bool logoSlide = false;
-int8_t logoPos = 8;
+int8_t logoPos = 0;
 int lastSlide = 0;
-int logoDelay = 20;
+
 uint16_t animDelay = DEFAULT_TIMER;
 bool invertStrips = false;
 bool trackRpm = false;
 uint16_t currentRpm = 0;
-float maxRpm = 7600.0f;
 
 static const uint8_t z_num_bytes = 4;
 static const char z_chars[] = "370Z";
@@ -75,10 +80,8 @@ uint8_t num_custom_chars;
 Maestro maestro(NUM_COLUMNS, NUM_ROWS);
 Section *section = maestro.get_section(0);
 
-const AnimationType animations[6] = {AnimationType::Wave, AnimationType::Fire, AnimationType::Plasma, AnimationType::Radial, AnimationType::Sparkle, AnimationType::Cycle};
-const Animation::Orientation orientations[2] = {Animation::Orientation::Vertical, Animation::Orientation::Horizontal};
-static const int numAnimations = 6;
-static const int numOrientations = 2;
+const AnimationType animations[NUM_ANIMATIONS] = {AnimationType::Wave, AnimationType::Fire, AnimationType::Plasma, AnimationType::Radial, AnimationType::Sparkle, AnimationType::Cycle};
+const Animation::Orientation orientations[NUM_ORIENTATIONS] = {Animation::Orientation::Vertical, Animation::Orientation::Horizontal};
 int currentAnimation = 0;
 int currentOrientation = 0;
 int currentPalette = 0;
@@ -269,12 +272,12 @@ void redraw()
 {
 
   if (trackRpm) {
-    setLogo(rpmChars, numRpmChars, rpmPos, logoOffset, false, false);
+    setLogo(rpmChars, numRpmChars, RPM_POS, logoOffset, false, false);
   } else {
     if (logoSlide && maestroActive ) {
       if (logoPos == NUM_COLUMNS + 2) logoPos = 0 - (num_custom_chars * (FONT_X + 1));
       setLogo(custom_chars, num_custom_chars, logoPos, logoOffset, false, false);
-      if (millis() > (lastSlide + logoDelay)) {
+      if (millis() > (lastSlide + LOGO_DELAY)) {
         lastSlide = millis();
         logoPos++;
       }
@@ -305,6 +308,7 @@ boolean maestroAnimator()
   }
   return updated;
 }
+
 uint8_t kittColorChannel = 0;
 uint8_t kittTailLength = 20;
 int kittLastRun = 0;
@@ -384,10 +388,10 @@ void syncMaestro()
   if ( xSemaphoreTake( pixelSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
     if (trackRpm) {
       currentRpm = atoi(rpmChars);
-      currentBright = currentRpm / maxRpm;
+      currentBright = currentRpm / MAX_RPM;
       if (currentBright > MAX_BRIGHT) currentBright = MAX_BRIGHT;
       if (currentBright < MIN_BRIGHT) currentBright = MIN_BRIGHT;
-      section->get_animation()->set_timer(animDelay * (MAX_BRIGHT - currentBright + MIN_BRIGHT));
+      section->get_animation()->set_timer(max(REFRESH, animDelay * (MAX_BRIGHT - currentBright)));
     }
     for (uint8_t x = 0; x < section->get_dimensions().x; x++) {
       for (uint8_t y = 0; y < section->get_dimensions().y; y++) {
@@ -442,7 +446,7 @@ void disableAnimator() {
   setBlack(true);
 }
 void cycleAnimation() {
-  if (currentAnimation < (numAnimations - 1))
+  if (currentAnimation < (NUM_ANIMATIONS - 1))
   {
     currentAnimation++;
   }
@@ -454,7 +458,7 @@ void cycleAnimation() {
 }
 
 void setAnimation(char* arguments, uint8_t &argumentLength) {
-  currentAnimation = (atoi(arguments) % numAnimations);
+  currentAnimation = (atoi(arguments) % NUM_ANIMATIONS);
   updateAnimation();
 }
 
@@ -489,7 +493,7 @@ void setPalette(char* arguments, uint8_t &argumentLength) {
 }
 
 void cycleOrientation() {
-  if (currentOrientation < (numOrientations - 1))
+  if (currentOrientation < (NUM_ORIENTATIONS - 1))
   {
     currentOrientation++;
   }
@@ -654,10 +658,10 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
       case 'A':
         Serial.println("animation");
         bleuart.write("animation changed");
-        if (argumentLength > 0) { 
-            callCharWithMutex(&setAnimation, arguments, argumentLength);
+        if (argumentLength > 0) {
+          callCharWithMutex(&setAnimation, arguments, argumentLength);
         } else {
-            callWithMutex(&cycleAnimation);
+          callWithMutex(&cycleAnimation);
         }
         Serial.println(dbgHeapTotal() - dbgHeapUsed());
         break;
@@ -675,24 +679,13 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
           uint8_t red = arguments[0];
           uint8_t green = arguments[1];
           uint8_t blue = arguments[2];
-          Serial.print("RGB #");
-          if (red < 0x10)
-            Serial.print("0");
-          Serial.print(red, HEX);
-          if (green < 0x10)
-            Serial.print("0");
-          Serial.print(green, HEX);
-          if (blue < 0x10)
-            Serial.print("0");
-          Serial.println(blue, HEX);
           disableAnimator();
-          packetPos = 4;
           break;
         }
       case 'D': {
-        
-        Serial.println("delay");
-        bleuart.write("delay changed");
+
+          Serial.println("delay");
+          bleuart.write("delay changed");
           animDelay = atoi(arguments);
           callWithMutex(&setDelay);
           break;
@@ -719,11 +712,12 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
       case 'P':
         Serial.println("palette");
         bleuart.write("palette changed");
-        if (argumentLength > 0) { 
-            callCharWithMutex(&setPalette, arguments, argumentLength);
+        if (argumentLength > 0) {
+          callCharWithMutex(&setPalette, arguments, argumentLength);
         } else {
-            callWithMutex(&cyclePalette);
-        }        break;
+          callWithMutex(&cyclePalette);
+        }
+        break;
       case 'R':
         if (trackRpm) {
           memcpy(rpmChars, arguments, min(4, argumentLength));
