@@ -311,12 +311,15 @@ boolean maestroAnimator()
 
 uint8_t kittColorChannel = 0;
 uint8_t kittTailLength = 20;
-int kittLastRun = 0;
-uint8_t kittDelay = 30;
-int8_t kittPosition = 0;
-uint8_t kittHeight = 2;
-boolean kittDirection = true;
+uint8_t kittDelay = 40;
+uint8_t kittHeight = 12;
 float kittEndFactor = 2;
+int8_t kittStartPosition = 24;
+uint8_t kittEndPosition = 52;
+
+boolean kittDirection = true;
+int8_t kittPosition = kittStartPosition;
+int kittLastRun = 0;
 
 boolean kitt() {
   if ( kittLastRun + kittDelay <= millis()) {
@@ -330,7 +333,7 @@ boolean kitt() {
       Colors::RGB color = {0, 0, 0};
       for (int8_t x = kittPosition; x >= (kittPosition - kittTailLength); x--)
       {
-        if (x >= 0 && x <= NUM_COLUMNS) {
+        if (x >= kittStartPosition && x <= kittEndPosition) {
           switch (kittColorChannel)
           {
             case 0:
@@ -361,15 +364,15 @@ boolean kitt() {
       } else {
         kittPosition--;
       }
-      if (!kittDirection && kittPosition < kittTailLength) {
+      if (!kittDirection && kittPosition < (kittTailLength + kittStartPosition)) {
         kittDirection = !kittDirection;
-        kittPosition = 0;
+        kittPosition = kittStartPosition;
         // Stay the end longer;
         kittLastRun += kittDelay * kittEndFactor;
       }
-      if (kittDirection && kittPosition > NUM_COLUMNS) {
+      if (kittDirection && kittPosition > kittEndPosition) {
         kittDirection = !kittDirection;
-        kittPosition = NUM_COLUMNS + kittTailLength;
+        kittPosition = kittEndPosition + kittTailLength;
         // Stay the end longer;
         kittLastRun += kittDelay * kittEndFactor;
       }
@@ -429,6 +432,40 @@ void toggleMaestro() {
   } else {
     animatorFunction = &maestroAnimator;
 
+  }
+}
+
+void handleKitt(char* arguments, uint8_t &argumentLength) {
+  if (argumentLength > 0) {
+    Serial.println("processing kitt settings");
+    bleuart.write("kitt updated");  
+    switch (arguments[0]) {
+      case 'C':
+          kittColorChannel = atoi(&arguments[1]);
+          break;
+      case 'D':
+          kittDelay = atoi(&arguments[1]);
+          break;
+      case 'E':
+          kittEndPosition = atoi(&arguments[1]);
+          break;
+      case 'H':
+          kittHeight = atoi(&arguments[1]);;
+          break;
+      case 'M':
+          kittEndFactor = atoi(&arguments[1]);
+          break;
+      case 'S':
+          kittStartPosition = atoi(&arguments[1]);
+          break;
+      case 'T':
+          kittTailLength = atoi(&arguments[1]);
+          break;
+    }
+  } else {
+    Serial.println("Enabling kitt");
+    bleuart.write("kitt enabled");
+    enableKitt();
   }
 }
 
@@ -537,7 +574,6 @@ void setup(void)
   Serial.begin(115200);
   while (!Serial)
     delay(10); // for nrf52840 with native usb
-  Serial.println("OTA UPDATE COMPLETE");
   Serial.println(F("LET THERE BE LIGHT!"));
   Serial.println(F("-------------------"));
   maestroSem = xSemaphoreCreateMutex();
@@ -600,10 +636,6 @@ void loop(void)
    Bluetooth LE Functions
 
 */
-void callbackAdv() {
-  Serial.println("Connected?");
-}
-
 
 void callbackPacket(uint16_t handle)
 {
@@ -624,7 +656,6 @@ void setDelay() {
 }
 
 void handlePacket(char *packetbuffer, uint8_t packetlength) {
-  Serial.println(packetbuffer);
   uint8_t packetPos = 0;
   if (packetbuffer[0] == '!' && packetbuffer[1] == 'R' && !trackRpm) return;
   if (packetbuffer[0] == '!' && packetlength > 1) {
@@ -635,8 +666,9 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
     char *arguments;
     if (packetlength > 2) {
       arguments = &packetbuffer[2];
-      for (argumentLength = 1; argumentLength + packetPos < packetlength; argumentLength++) {
-        if (packetbuffer[packetPos + argumentLength] == '!') {
+      packetPos = 2;
+      for (argumentLength = 1; (argumentLength + packetPos) < packetlength; argumentLength++) {
+        if (packetbuffer[packetPos + argumentLength - 1] == '!'  ) {
           argumentLength--;
           break;
         }
@@ -650,8 +682,9 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
           bleuart.write("PREPARING FOR OTA");
           disableAnimator();
           delay(10);
-          fade_in(1, (currentBright * 255), 4);
-          fade_out(1, (currentBright * 255 - 1), 4);
+          fade_in(0, (currentBright * 255), 4);
+          delay(10);
+          fade_out(0, (currentBright * 255 - 1), 4);
           enterOTADfu();
           break;
         }
@@ -696,8 +729,7 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
         invertStrips = !invertStrips;
         break;
       case 'K':
-        Serial.println("Enabling kitt");
-        enableKitt();
+        handleKitt(arguments, argumentLength);
         break;
       case 'M':
         Serial.println(F("Toggling Maestro"));
@@ -728,11 +760,10 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
       case 'S':
         Serial.print(F("Toggle custom string "));
         if (argumentLength > 0) {
-          Serial.print("on:");
+          Serial.print("on");
           memcpy(custom_chars, arguments, min(18, argumentLength));
           num_custom_chars = min(18, argumentLength);
-          Serial.println(custom_chars);
-          bleuart.write("string set");
+          bleuart.write(" string set");
           logoPos = 0 - (num_custom_chars * (FONT_X + 1));
           logoSlide = true;
         } else {
@@ -745,6 +776,11 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
         bleuart.write("tracking rpm toggled");
         trackRpm = !trackRpm;
         break;
+      case 'X': {
+         disableAnimator();
+         setBlack(true);
+         break;
+      }
       case 'Y': {
           logoOffset = atoi(arguments);
           Serial.println("logo offset");
@@ -753,7 +789,6 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
           break;
         }
     }
-    packetPos++;
     if (packetPos < packetlength) {
       Serial.println("recursing");
       char *secondSet = &packetbuffer[packetPos];
