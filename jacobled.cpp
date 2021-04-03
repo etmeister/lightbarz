@@ -172,4 +172,3 @@ void led_set_colors(PixelMaestro::Colors::RGB *colors, uint8_t pin, PixelMaestro
   PWM[2]->ENABLE = 0;
   PWM[2]->PSEL.OUT[0] = 0xFFFFFFFFUL;
 }
-

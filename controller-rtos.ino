@@ -11,6 +11,7 @@
   All text above, and the splash screen below must be included in
   any redistribution
 *********************************************************************/
+
 #include <PixelMaestro.h>
 #include <core/maestro.h>
 #include <colorpresets.h>
@@ -28,8 +29,8 @@
 #define MIN_BRIGHT 0.2f
 #define MAX_BRIGHT 1.0f
 #define BRIGHT_STEP .05f
-#define LOGO_BRIGHT .2f
-#define DEFAULT_BRIGHT .5f
+#define LOGO_BRIGHT .15f
+#define DEFAULT_BRIGHT 0.8f
 #define NUM_ROWS 12
 #define NUM_COLUMNS 76
 #define FONT_X 5
@@ -63,9 +64,10 @@ uint8_t numRpmChars = 0;
 bool maestroActive = false;
 float currentBright = DEFAULT_BRIGHT;
 int logoOffset = LOGO_OFFSET;
-bool logoSlide = false;
+bool logoSlide = true;
+bool logoEnabled = false;
 int8_t logoPos = 0;
-int lastSlide = 0;
+int nextSlide = 0;
 
 uint16_t animDelay = DEFAULT_TIMER;
 bool invertStrips = false;
@@ -85,7 +87,7 @@ const Animation::Orientation orientations[NUM_ORIENTATIONS] = {Animation::Orient
 int currentAnimation = 0;
 int currentOrientation = 0;
 int currentPalette = 0;
-
+int currentCycle = 0;
 char packetreceivebuffer[READ_BUFSIZE + 1];
 
 // Uart over BLE service
@@ -273,14 +275,17 @@ void redraw()
 
   if (trackRpm) {
     setLogo(rpmChars, numRpmChars, RPM_POS, logoOffset, false, false);
-  } else {
-    if (logoSlide && maestroActive ) {
-      if (logoPos == NUM_COLUMNS + 2) logoPos = 0 - (num_custom_chars * (FONT_X + 1));
+  } else if (logoEnabled) {
+    if(logoSlide) {
+      if (logoPos == (0 - (num_custom_chars * (FONT_X + 1)))) logoPos = NUM_COLUMNS + 2;
       setLogo(custom_chars, num_custom_chars, logoPos, logoOffset, false, false);
-      if (millis() > (lastSlide + LOGO_DELAY)) {
-        lastSlide = millis();
-        logoPos++;
+      if (currentCycle > nextSlide) {
+        nextSlide = currentCycle + LOGO_DELAY;
+        logoPos--;
       }
+    } else {
+      logoPos = (NUM_COLUMNS - (num_custom_chars * (FONT_X + 1)))/2;
+      setLogo(custom_chars, num_custom_chars, logoPos, logoOffset, false, false);
     }
   }
   if ( xSemaphoreTake( pixelSem, ( TickType_t ) 0 ) == pdTRUE ) {
@@ -299,7 +304,7 @@ boolean maestroAnimator()
 {
   boolean updated = false;
   if ( xSemaphoreTake( maestroSem, ( TickType_t ) 0 ) == pdTRUE ) {
-    if (maestro.update(millis()))
+    if (maestro.update(currentCycle))
     {
       syncMaestro();
       updated = true;
@@ -311,18 +316,28 @@ boolean maestroAnimator()
 
 uint8_t kittColorChannel = 0;
 uint8_t kittTailLength = 20;
-uint8_t kittDelay = 40;
+uint8_t currentKittTailLength = 0;
+uint8_t kittDelay = 50;
 uint8_t kittHeight = 12;
-float kittEndFactor = 2;
-int8_t kittStartPosition = 24;
-uint8_t kittEndPosition = 52;
-
+float kittEndFactor = 6;
+int8_t kittStartPosition = 20;
+uint8_t kittEndPosition = 54;
+uint8_t kittShrinking = 0;
 boolean kittDirection = true;
 int8_t kittPosition = kittStartPosition;
-int kittLastRun = 0;
+int kittNextRun = 0;
 
 boolean kitt() {
-  if ( kittLastRun + kittDelay <= millis()) {
+  if ( kittNextRun <= currentCycle) {
+    setBlack(false);
+    if (kittShrinking > 0) {
+      currentKittTailLength = kittTailLength / kittEndFactor * kittShrinking;
+      if (!kittDirection) {
+          kittPosition = kittStartPosition + currentKittTailLength;
+      }
+    } else {
+      currentKittTailLength = kittTailLength;
+    }
     if (xSemaphoreTake( pixelSem, ( TickType_t ) 0 ) == pdTRUE ) {
       uint8_t colorValue;
       if (kittDirection) {
@@ -331,19 +346,20 @@ boolean kitt() {
         colorValue = 0;
       }
       Colors::RGB color = {0, 0, 0};
-      for (int8_t x = kittPosition; x >= (kittPosition - kittTailLength); x--)
+
+      for (int8_t x = kittPosition; x >= (kittPosition - currentKittTailLength); x--)
       {
         if (x >= kittStartPosition && x <= kittEndPosition) {
           switch (kittColorChannel)
           {
             case 0:
-              color.r = colorValue;
+              color.r = colorValue * currentBright;
               break;
             case 1:
-              color.g = colorValue;
+              color.g = colorValue * currentBright;
               break;
             case 2:
-              color.b = colorValue;
+              color.b = colorValue * currentBright;
               break;
           }
           for (uint8_t y = logoOffset; y < logoOffset + kittHeight; y++) {
@@ -352,29 +368,36 @@ boolean kitt() {
           }
         }
         if (kittDirection) {
-          colorValue = colorValue - (255 / kittTailLength);
+          colorValue = colorValue - (255 / currentKittTailLength);
         } else {
-          colorValue = colorValue + (255 / kittTailLength);
+          colorValue = colorValue + (255 / currentKittTailLength);
         }
       }
       xSemaphoreGive(pixelSem);
-      kittLastRun = millis();
-      if (kittDirection) {
-        kittPosition++;
+      kittNextRun = currentCycle + kittDelay;
+
+      if (kittShrinking > 1) {
+        kittShrinking -= 1;
+      } else if (kittShrinking == 1) {
+          kittShrinking = 0;
+          if (!kittDirection) {
+            kittPosition = kittStartPosition;
+          } else if (kittDirection) {
+            kittPosition = kittEndPosition + kittTailLength;
+          }
+          kittDirection = !kittDirection;
       } else {
-        kittPosition--;
-      }
-      if (!kittDirection && kittPosition < (kittTailLength + kittStartPosition)) {
-        kittDirection = !kittDirection;
-        kittPosition = kittStartPosition;
-        // Stay the end longer;
-        kittLastRun += kittDelay * kittEndFactor;
-      }
-      if (kittDirection && kittPosition > kittEndPosition) {
-        kittDirection = !kittDirection;
-        kittPosition = kittEndPosition + kittTailLength;
-        // Stay the end longer;
-        kittLastRun += kittDelay * kittEndFactor;
+        if (!kittDirection && kittPosition <= (kittTailLength + kittStartPosition)) {
+          kittShrinking = kittEndFactor;
+        } else if (kittDirection && kittPosition >= kittEndPosition) {
+          kittShrinking = kittEndFactor;
+        } else {
+          if (kittDirection) {
+            kittPosition++;
+          } else {
+            kittPosition--;
+          } 
+        }
       }
       return true;
 
@@ -479,7 +502,7 @@ void disableAnimator() {
   animatorFunction = &noopAnimator;
   trackRpm = false;
   maestroActive = false;
-  logoSlide = false;
+  logoEnabled = false;
   setBlack(true);
 }
 void cycleAnimation() {
@@ -626,7 +649,8 @@ void setup(void)
 
 void loop(void)
 {
-  if (animatorFunction()) {
+  currentCycle = millis();
+  if (animatorFunction() || nextSlide < currentCycle) {
     redraw();
   }
 }
@@ -731,6 +755,12 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
       case 'K':
         handleKitt(arguments, argumentLength);
         break;
+      case 'L':
+        Serial.println("toggle slide");
+        bleuart.write("logo scrolling toggled");
+        logoSlide = !logoSlide;
+        if (logoSlide) logoPos = NUM_COLUMNS + 2;
+        break;
       case 'M':
         Serial.println(F("Toggling Maestro"));
         bleuart.write("Toggling display");
@@ -764,11 +794,11 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
           memcpy(custom_chars, arguments, min(18, argumentLength));
           num_custom_chars = min(18, argumentLength);
           bleuart.write(" string set");
-          logoPos = 0 - (num_custom_chars * (FONT_X + 1));
-          logoSlide = true;
+          logoPos = NUM_COLUMNS + 2;
+          logoEnabled = true;
         } else {
           Serial.println("off");
-          logoSlide = false;
+          logoEnabled = false;
         }
         break;
       case 'V':
