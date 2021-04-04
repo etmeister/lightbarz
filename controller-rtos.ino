@@ -37,7 +37,6 @@
 #define FONT_Y 5
 #define REFRESH 15
 #define DEFAULT_TIMER 120
-#define LOGO_DELAY 20
 #define LED_PIN 2
 #define LED2_PIN 3
 #define LED3_PIN 5
@@ -61,13 +60,14 @@ Colors::RGB leds2[NUM_LEDS];
 Colors::RGB leds3[NUM_LEDS];
 char rpmChars[4];
 uint8_t numRpmChars = 0;
-bool maestroActive = false;
 float currentBright = DEFAULT_BRIGHT;
 int logoOffset = LOGO_OFFSET;
 bool logoSlide = true;
 bool logoEnabled = false;
-int8_t logoPos = 0;
+int8_t logoDelay = 50;
+int8_t logoPos = NUM_COLUMNS + 2;
 int nextSlide = 0;
+uint8_t lastRedraw = 0;
 
 uint16_t animDelay = DEFAULT_TIMER;
 bool invertStrips = false;
@@ -272,15 +272,15 @@ void colorCheck()
 
 void redraw()
 {
-
+  lastRedraw = currentCycle;
   if (trackRpm) {
     setLogo(rpmChars, numRpmChars, RPM_POS, logoOffset, false, false);
   } else if (logoEnabled) {
     if(logoSlide) {
-      if (logoPos == (0 - (num_custom_chars * (FONT_X + 1)))) logoPos = NUM_COLUMNS + 2;
+      if (logoPos <= (0 - (num_custom_chars * (FONT_X + 1)))) logoPos = NUM_COLUMNS + 2;
       setLogo(custom_chars, num_custom_chars, logoPos, logoOffset, false, false);
-      if (currentCycle > nextSlide) {
-        nextSlide = currentCycle + LOGO_DELAY;
+      if (currentCycle >= nextSlide) {
+        nextSlide = currentCycle + logoDelay;
         logoPos--;
       }
     } else {
@@ -298,6 +298,18 @@ void redraw()
     //// DEBUG Serial.println(dbgHeapTotal() - dbgHeapUsed());
     xSemaphoreGive( pixelSem );
   }
+}
+boolean logoAnimator() {
+    bool updated = false;
+    if (trackRpm) {
+      if (currentCycle >= (lastRedraw + REFRESH)) updated = true;
+    } else if (logoSlide) {
+      if (currentCycle >= nextSlide) updated = true;
+    }
+    if (updated) {
+      setBlack(false);
+    }
+    return updated;
 }
 
 boolean maestroAnimator()
@@ -443,18 +455,43 @@ void syncMaestro()
    Command Functions
 
 */
+
+
 bool (*animatorFunction) ();
 bool noopAnimator() {
   return false;
 }
-void toggleMaestro() {
-  maestroActive = !maestroActive;
-  if (!maestroActive)
-  {
-    disableAnimator();
-  } else {
-    animatorFunction = &maestroAnimator;
 
+void disableAnimator(bool clearExtra = true) {
+  if (clearExtra) { 
+    trackRpm = false;
+    logoEnabled = false;
+  }
+  if (trackRpm || logoEnabled) {
+    animatorFunction = &logoAnimator;
+  } else {
+    animatorFunction = &noopAnimator;
+  }
+  setBlack(true);
+}
+void toggleLogo(bool softEnable = false) {
+  if (animatorFunction != &logoAnimator) {
+    logoEnabled = true;
+    if (!softEnable || animatorFunction == &noopAnimator) {
+       animatorFunction = &logoAnimator;
+    }
+  } else if (!softEnable) {
+    logoEnabled = false;
+    if (!trackRpm) disableAnimator(false);
+  }
+
+
+}
+void toggleMaestro() {
+  if (animatorFunction != &maestroAnimator) {
+    animatorFunction = &maestroAnimator;
+  } else {
+    disableAnimator(false);
   }
 }
 
@@ -486,25 +523,21 @@ void handleKitt(char* arguments, uint8_t &argumentLength) {
           break;
     }
   } else {
-    Serial.println("Enabling kitt");
-    bleuart.write("kitt enabled");
-    enableKitt();
+    Serial.println("Toggling kitt");
+    bleuart.write("kitt toggled");
+    toggleKitt();
   }
 }
 
-void enableKitt() {
-  disableAnimator();
-  setBlack(true);
-  animatorFunction = &kitt;
+void toggleKitt() {
+  if (animatorFunction != &kitt) {
+    kittNextRun = 0;
+    animatorFunction = &kitt;
+  } else {
+    disableAnimator(false);
+  }
 }
 
-void disableAnimator() {
-  animatorFunction = &noopAnimator;
-  trackRpm = false;
-  maestroActive = false;
-  logoEnabled = false;
-  setBlack(true);
-}
 void cycleAnimation() {
   if (currentAnimation < (NUM_ANIMATIONS - 1))
   {
@@ -650,8 +683,11 @@ void setup(void)
 void loop(void)
 {
   currentCycle = millis();
-  if (animatorFunction() || nextSlide < currentCycle) {
+  if (animatorFunction()) {
     redraw();
+  } else if (logoEnabled && logoSlide && currentCycle >= nextSlide) {
+    nextSlide = currentCycle + logoDelay;
+    logoPos--;
   }
 }
 
@@ -756,10 +792,18 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
         handleKitt(arguments, argumentLength);
         break;
       case 'L':
-        Serial.println("toggle slide");
-        bleuart.write("logo scrolling toggled");
-        logoSlide = !logoSlide;
-        if (logoSlide) logoPos = NUM_COLUMNS + 2;
+        if (argumentLength > 0) {
+          Serial.println("toggle slide delay");
+          bleuart.write("logo scrolling delay set");
+          if (!logoSlide) logoSlide = true;
+          logoDelay = atoi(arguments);
+          //logoPos = NUM_COLUMNS + 2;
+        } else {
+          Serial.println("toggle slide");
+          bleuart.write("logo scrolling toggled");
+          logoSlide = !logoSlide;
+          //if (logoSlide) logoPos = NUM_COLUMNS + 2;
+        }
         break;
       case 'M':
         Serial.println(F("Toggling Maestro"));
@@ -794,17 +838,18 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
           memcpy(custom_chars, arguments, min(18, argumentLength));
           num_custom_chars = min(18, argumentLength);
           bleuart.write(" string set");
-          logoPos = NUM_COLUMNS + 2;
-          logoEnabled = true;
+          //logoPos = NUM_COLUMNS + 2;
+          toggleLogo(true);
         } else {
-          Serial.println("off");
-          logoEnabled = false;
+          Serial.println("toggled");
+          toggleLogo();
         }
         break;
       case 'V':
         Serial.println(F("Toggling rpm tracking"));
         bleuart.write("tracking rpm toggled");
         trackRpm = !trackRpm;
+        if (trackRpm && animatorFunction == &noopAnimator) toggleLogo(true);
         break;
       case 'X': {
          disableAnimator();
