@@ -29,7 +29,7 @@
 #define MIN_BRIGHT 0.2f
 #define MAX_BRIGHT 1.0f
 #define BRIGHT_STEP .05f
-#define LOGO_BRIGHT .15f
+#define LOGO_BRIGHT_STEP .02f
 #define DEFAULT_BRIGHT 0.8f
 #define NUM_ROWS 12
 #define NUM_COLUMNS 76
@@ -64,6 +64,7 @@ float currentBright = DEFAULT_BRIGHT;
 int logoOffset = LOGO_OFFSET;
 bool logoSlide = true;
 bool logoEnabled = false;
+float logoBrightOffset = .10f;
 int8_t logoDelay = 50;
 int8_t logoPos = NUM_COLUMNS + 2;
 int nextSlide = 0;
@@ -208,8 +209,8 @@ void callCharWithMutex(void (*function) (char*, uint8_t&), char *arguments, uint
 void setLogo(const char* logo_bytes, const uint8_t num_bytes, uint16_t pos_x = 0, uint16_t pos_y = 0, bool blank = true, bool forceRedraw = true)
 {
   float brighter = currentBright;
-  if (currentBright + LOGO_BRIGHT < MAX_BRIGHT ) {
-    brighter += LOGO_BRIGHT;
+  if (currentBright + logoBrightOffset < MAX_BRIGHT ) {
+    brighter += logoBrightOffset;
   } else {
     brighter = MAX_BRIGHT;
   }
@@ -301,9 +302,9 @@ void redraw()
 }
 boolean logoAnimator() {
     bool updated = false;
-    if (trackRpm) {
+    if (trackRpm || !logoSlide) {
       if (currentCycle >= (lastRedraw + REFRESH)) updated = true;
-    } else if (logoSlide) {
+    } else {
       if (currentCycle >= nextSlide) updated = true;
     }
     if (updated) {
@@ -392,25 +393,20 @@ boolean kitt() {
         kittShrinking -= 1;
       } else if (kittShrinking == 1) {
           kittShrinking = 0;
-          if (!kittDirection) {
-            kittPosition = kittStartPosition;
-          } else if (kittDirection) {
+          if (kittDirection) {
             kittPosition = kittEndPosition + kittTailLength;
+          } else {
+            kittPosition = kittStartPosition;
           }
           kittDirection = !kittDirection;
+      } else if ( (!kittDirection && kittPosition <= (kittTailLength + kittStartPosition)) ||
+                  (kittDirection && kittPosition >= kittEndPosition) ) {
+        kittShrinking = kittEndFactor;
+      } else if (kittDirection) {
+        kittPosition++;
       } else {
-        if (!kittDirection && kittPosition <= (kittTailLength + kittStartPosition)) {
-          kittShrinking = kittEndFactor;
-        } else if (kittDirection && kittPosition >= kittEndPosition) {
-          kittShrinking = kittEndFactor;
-        } else {
-          if (kittDirection) {
-            kittPosition++;
-          } else {
-            kittPosition--;
-          } 
-        }
-      }
+        kittPosition--;
+      } 
       return true;
 
     }
@@ -425,10 +421,6 @@ void syncMaestro()
   float percent;
   if ( xSemaphoreTake( pixelSem, ( TickType_t ) pdMS_TO_TICKS(50) ) == pdTRUE ) {
     if (trackRpm) {
-      currentRpm = atoi(rpmChars);
-      currentBright = currentRpm / MAX_RPM;
-      if (currentBright > MAX_BRIGHT) currentBright = MAX_BRIGHT;
-      if (currentBright < MIN_BRIGHT) currentBright = MIN_BRIGHT;
       section->get_animation()->set_timer(max(REFRESH, animDelay * (MAX_BRIGHT - currentBright)));
     }
     for (uint8_t x = 0; x < section->get_dimensions().x; x++) {
@@ -474,19 +466,28 @@ void disableAnimator(bool clearExtra = true) {
   }
   setBlack(true);
 }
-void toggleLogo(bool softEnable = false) {
-  if (animatorFunction != &logoAnimator) {
+
+void toggleLogo(bool forceEnable = false) {
+  
+  if (forceEnable) {
     logoEnabled = true;
-    if (!softEnable || animatorFunction == &noopAnimator) {
-       animatorFunction = &logoAnimator;
-    }
-  } else if (!softEnable) {
-    logoEnabled = false;
-    if (!trackRpm) disableAnimator(false);
+  } else {
+    logoEnabled = !logoEnabled;
   }
 
+  if (logoEnabled) {
+    if (animatorFunction == &noopAnimator) {
+       animatorFunction = &logoAnimator;
+    }
+  } else {
+    if (animatorFunction == &logoAnimator && !trackRpm) {
+      disableAnimator(false);
+    }
+  }
 
 }
+
+
 void toggleMaestro() {
   if (animatorFunction != &maestroAnimator) {
     animatorFunction = &maestroAnimator;
@@ -595,6 +596,29 @@ void cycleOrientation() {
     currentOrientation = 0;
   }
   section->get_animation()->set_orientation(orientations[currentOrientation]);
+}
+void logoBrightnessUp() {
+  if ((logoBrightOffset + LOGO_BRIGHT_STEP) <= MAX_BRIGHT)
+  {
+    logoBrightOffset = logoBrightOffset + LOGO_BRIGHT_STEP;
+    Serial.print(F("Logo brightness offset set to "));
+    Serial.println((uint8_t)(logoBrightOffset * 255));
+    //bleuart.write((uint8_t)(currentBright * 255));
+
+  } else {
+    logoBrightOffset = MAX_BRIGHT;
+  }
+}
+
+void logoBrightnessDown() {
+  if ((logoBrightOffset - LOGO_BRIGHT_STEP) >= MIN_BRIGHT) {
+    currentBright = currentBright - LOGO_BRIGHT_STEP;
+    Serial.print(F("Logo brightness set to "));
+    Serial.println((uint8_t)(logoBrightOffset * 255));
+    //bleuart.write((uint8_t)(currentBright * 255));
+  } else {
+    logoBrightOffset = MIN_BRIGHT;
+  }
 }
 
 void brightnessUp() {
@@ -773,6 +797,7 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
           uint8_t green = arguments[1];
           uint8_t blue = arguments[2];
           disableAnimator();
+          setColor(Colors::RGB(red, green, blue), true);
           break;
         }
       case 'D': {
@@ -783,6 +808,18 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
           callWithMutex(&setDelay);
           break;
         }
+      case 'G':
+      {
+        Serial.print(F("Logo brightness offset "));
+        if (arguments[0] == 'U') {
+          Serial.println("up");
+          logoBrightnessUp();
+        } else {
+          Serial.println("down");
+          logoBrightnessDown();
+        }
+        break;        
+      }
       case 'I':
         Serial.println("invert strip");
         bleuart.write("strip inverted");
@@ -829,6 +866,10 @@ void handlePacket(char *packetbuffer, uint8_t packetlength) {
           memcpy(rpmChars, arguments, min(4, argumentLength));
           numRpmChars = min(4, argumentLength);
           if (numRpmChars < 4) rpmChars[3] = 0;
+          currentRpm = atoi(rpmChars);
+          currentBright = currentRpm / MAX_RPM;
+          if (currentBright > MAX_BRIGHT) currentBright = MAX_BRIGHT;
+          if (currentBright < MIN_BRIGHT) currentBright = MIN_BRIGHT;
         }
         break;
       case 'S':

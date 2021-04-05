@@ -22,6 +22,8 @@
 !L - toggle logo sliding
 !Y# - set logo vertical offset
 !L# - set logo slide delay
+!GU - adjust logo brightness offset up
+!GD - adjust logo brightness offset down
 
 
 !V - toggle rpm tracking
